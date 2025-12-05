@@ -6,6 +6,7 @@ let gltfLoader;
 
 // Asset streaming state
 let assetStreams = new Map(); // Track incoming asset streams
+let expectingBinaryChunk = false; // Global flag for next binary message
 
 function initThreeJS() {
   const container = document.getElementById("canvas-container");
@@ -70,21 +71,27 @@ function initWebSocket() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   ws = new WebSocket(`${protocol}//${window.location.host}`);
 
+  // Set binary type to arraybuffer for easier handling
+  ws.binaryType = "arraybuffer";
+
   ws.onopen = () => {
     console.log("WebSocket connected");
     updateStatus("ws-status", "Connected", "connected");
   };
 
   ws.onmessage = (event) => {
-    // Handle binary data (asset chunks)
-    if (event.data instanceof Blob) {
-      event.data.arrayBuffer().then((buffer) => {
-        handleAssetChunkData(buffer);
-      });
+    // Check if this is binary data
+    if (event.data instanceof ArrayBuffer) {
+      console.log("Received binary data, size:", event.data.byteLength);
+      handleAssetChunkData(event.data);
     } else {
       // Handle JSON messages
-      const data = JSON.parse(event.data);
-      handleSignalingMessage(data);
+      try {
+        const data = JSON.parse(event.data);
+        handleSignalingMessage(data);
+      } catch (error) {
+        console.error("Error parsing JSON message:", error, event.data);
+      }
     }
   };
 
@@ -99,6 +106,8 @@ function initWebSocket() {
 }
 
 function handleSignalingMessage(data) {
+  console.log("Received message type:", data.type);
+
   switch (data.type) {
     case "welcome":
       clientId = data.id;
@@ -150,12 +159,15 @@ function handleSignalingMessage(data) {
 
     case "asset_error":
       console.error("Asset error:", data.error);
-      updateStatus("binary-status", "Error", "disconnected");
+      updateStatus("binary-status", "Error: " + data.error, "disconnected");
       break;
 
     case "asset_list":
       console.log("Available assets:", data.assets);
       break;
+
+    default:
+      console.warn("Unknown message type:", data.type);
   }
 }
 
@@ -263,9 +275,8 @@ function handleAssetStart(data) {
     totalSize: data.size,
     totalChunks: data.chunks,
     receivedChunks: 0,
-    buffer: new Uint8Array(data.size),
+    chunks: [],
     currentOffset: 0,
-    expectingBinary: false,
   });
 
   updateStatus("binary-status", `Downloading (0/${data.chunks})`, "pending");
@@ -278,22 +289,28 @@ function handleAssetChunkMetadata(data) {
     return;
   }
 
-  // Store chunk metadata and set flag to expect binary data next
-  stream.currentChunkMeta = data;
-  stream.expectingBinary = true;
+  // Store that we're expecting a binary chunk next
+  stream.expectingChunk = true;
+  stream.currentChunkIndex = data.chunkIndex;
+  expectingBinaryChunk = true;
 
   console.log(
-    `Received metadata for chunk ${data.chunkIndex}/${data.totalChunks} of ${data.assetId}`,
+    `Expecting binary chunk ${data.chunkIndex}/${data.totalChunks} for ${data.assetId}`,
   );
 }
 
 function handleAssetChunkData(arrayBuffer) {
-  // Find the stream that is expecting binary data
+  if (!expectingBinaryChunk) {
+    console.error("Received unexpected binary data");
+    return;
+  }
+
+  // Find the stream that is expecting a chunk
   let targetStream = null;
   let targetAssetId = null;
 
   for (const [assetId, stream] of assetStreams) {
-    if (stream.expectingBinary) {
+    if (stream.expectingChunk) {
       targetStream = stream;
       targetAssetId = assetId;
       break;
@@ -301,24 +318,24 @@ function handleAssetChunkData(arrayBuffer) {
   }
 
   if (!targetStream) {
-    console.error("Received binary data but no stream is expecting it");
+    console.error("Received binary chunk but no stream is expecting it");
+    expectingBinaryChunk = false;
     return;
   }
 
   const chunkData = new Uint8Array(arrayBuffer);
 
-  // Copy chunk data into the buffer at the current offset
-  targetStream.buffer.set(chunkData, targetStream.currentOffset);
-  targetStream.currentOffset += chunkData.length;
+  // Store the chunk
+  targetStream.chunks.push(chunkData);
   targetStream.receivedChunks++;
 
   console.log(
-    `Received binary chunk ${targetStream.receivedChunks}/${targetStream.totalChunks} of ${targetAssetId} (${chunkData.length} bytes)`,
+    `Received chunk ${targetStream.receivedChunks}/${targetStream.totalChunks} for ${targetAssetId} (${chunkData.length} bytes)`,
   );
 
-  // Reset binary expectation flag
-  targetStream.expectingBinary = false;
-  targetStream.currentChunkMeta = null;
+  // Reset flags
+  targetStream.expectingChunk = false;
+  expectingBinaryChunk = false;
 
   // Update status
   updateStatus(
@@ -336,11 +353,24 @@ function handleAssetComplete(data) {
   }
 
   console.log(
-    `Asset download complete: ${data.assetId} (${stream.totalSize} bytes)`,
+    `Asset download complete: ${data.assetId}, received ${stream.receivedChunks} chunks`,
   );
 
-  // Create blob from buffer
-  const blob = new Blob([stream.buffer], { type: "model/gltf-binary" });
+  // Combine all chunks into single buffer
+  let totalLength = 0;
+  stream.chunks.forEach((chunk) => (totalLength += chunk.length));
+
+  const combinedBuffer = new Uint8Array(totalLength);
+  let offset = 0;
+  stream.chunks.forEach((chunk) => {
+    combinedBuffer.set(chunk, offset);
+    offset += chunk.length;
+  });
+
+  console.log(`Combined buffer size: ${combinedBuffer.length} bytes`);
+
+  // Create blob from combined buffer
+  const blob = new Blob([combinedBuffer], { type: "model/gltf-binary" });
   const url = URL.createObjectURL(blob);
 
   // Load the GLB model
@@ -348,11 +378,11 @@ function handleAssetComplete(data) {
 
   // Clean up
   assetStreams.delete(data.assetId);
-  updateStatus("binary-status", "Loaded GLB", "connected");
 }
 
 function loadGLBModel(url, assetId) {
-  console.log("Loading GLB model:", assetId);
+  console.log("Loading GLB model:", assetId, "from URL:", url);
+  updateStatus("binary-status", "Loading GLB...", "pending");
 
   gltfLoader.load(
     url,
@@ -366,13 +396,27 @@ function loadGLBModel(url, assetId) {
 
       // Add the loaded model to the scene
       const model = gltf.scene;
-      model.position.set(0, 0, 0);
+      model.position.set(0, 0, -2); // Move back from camera
+      model.scale.set(1.5, 1.5, 1.5); // Scale up
+
+      // Add a material to the model since GLB doesn't have one
+      model.traverse((child) => {
+        if (child.isMesh) {
+          child.material = new THREE.MeshStandardMaterial({
+            color: 0x3498db, // Blue color
+            roughness: 0.5,
+            metalness: 0.3,
+          });
+        }
+      });
+
       scene.add(model);
 
       // Store reference for animation
       cube = model;
 
       console.log("Model added to scene");
+      updateStatus("binary-status", "GLB Loaded!", "connected");
       URL.revokeObjectURL(url);
     },
     (progress) => {
