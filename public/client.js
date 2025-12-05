@@ -420,6 +420,10 @@ function loadGLBModel(url, assetId, lod) {
       const model = gltf.scene;
       model.position.set(0, 0, -2); // Move back from camera
       model.scale.set(1.5, 1.5, 1.5); // Scale up
+      
+      // Store asset metadata for adaptive streaming
+      model.userData.assetId = assetId;
+      model.userData.lod = stream.lod;
 
       // Add a material to the model since GLB doesn't have one
       model.traverse((child) => {
