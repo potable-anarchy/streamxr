@@ -2,6 +2,10 @@ let scene, camera, renderer, cube;
 let ws;
 let clientId;
 let peers = new Map();
+let gltfLoader;
+
+// Asset streaming state
+let assetStreams = new Map(); // Track incoming asset streams
 
 function initThreeJS() {
   const container = document.getElementById('canvas-container');
@@ -20,6 +24,9 @@ function initThreeJS() {
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   container.appendChild(renderer.domElement);
+
+  // Initialize GLTFLoader
+  gltfLoader = new THREE.GLTFLoader();
 
   const geometry = new THREE.BoxGeometry(2, 2, 2);
   const material = new THREE.MeshStandardMaterial({
@@ -67,8 +74,16 @@ function initWebSocket() {
   };
 
   ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    handleSignalingMessage(data);
+    // Handle binary data (asset chunks)
+    if (event.data instanceof Blob) {
+      event.data.arrayBuffer().then(buffer => {
+        handleAssetChunkData(buffer);
+      });
+    } else {
+      // Handle JSON messages
+      const data = JSON.parse(event.data);
+      handleSignalingMessage(data);
+    }
   };
 
   ws.onclose = () => {
@@ -91,6 +106,9 @@ function handleSignalingMessage(data) {
       data.peers.forEach(peerId => {
         createPeerConnection(peerId, true);
       });
+
+      // Request an asset after connection
+      setTimeout(() => requestAsset('sphere-high'), 1000);
       break;
 
     case 'peer-connected':
@@ -111,6 +129,27 @@ function handleSignalingMessage(data) {
         createPeerConnection(data.from, false);
       }
       peers.get(data.from).signal(data.signal);
+      break;
+
+    case 'asset-start':
+      handleAssetStart(data);
+      break;
+
+    case 'asset-chunk':
+      handleAssetChunkMetadata(data);
+      break;
+
+    case 'asset-complete':
+      handleAssetComplete(data);
+      break;
+
+    case 'asset-error':
+      console.error('Asset error:', data.error);
+      updateStatus('asset-status', 'Error', 'disconnected');
+      break;
+
+    case 'asset-list':
+      console.log('Available assets:', data.assets);
       break;
   }
 }
@@ -188,6 +227,141 @@ function updateStatus(elementId, text, className) {
   const element = document.getElementById(elementId);
   element.textContent = text;
   element.className = className;
+}
+
+// Asset Streaming Functions
+
+function requestAsset(assetId) {
+  console.log('Requesting asset:', assetId);
+  ws.send(JSON.stringify({
+    type: 'request-asset',
+    assetId: assetId
+  }));
+  updateStatus('asset-status', 'Requesting...', 'pending');
+}
+
+function handleAssetStart(data) {
+  console.log(`Starting asset download: ${data.assetId}, size: ${data.totalSize} bytes, chunks: ${data.totalChunks}`);
+
+  assetStreams.set(data.assetId, {
+    assetId: data.assetId,
+    totalSize: data.totalSize,
+    totalChunks: data.totalChunks,
+    chunks: [],
+    receivedChunks: 0,
+    buffer: new Uint8Array(data.totalSize),
+    expectingBinary: false,
+    nextChunkIndex: 0
+  });
+
+  updateStatus('asset-status', `Downloading (0/${data.totalChunks})`, 'pending');
+}
+
+function handleAssetChunkMetadata(data) {
+  const stream = assetStreams.get(data.assetId);
+  if (!stream) {
+    console.error('Received chunk metadata for unknown asset:', data.assetId);
+    return;
+  }
+
+  // Store chunk metadata and set flag to expect binary data next
+  stream.currentChunkMeta = data;
+  stream.expectingBinary = true;
+
+  console.log(`Received metadata for chunk ${data.chunkIndex} of ${data.assetId}`);
+}
+
+function handleAssetChunkData(arrayBuffer) {
+  // Find the stream that is expecting binary data
+  let targetStream = null;
+  let targetAssetId = null;
+
+  for (const [assetId, stream] of assetStreams) {
+    if (stream.expectingBinary) {
+      targetStream = stream;
+      targetAssetId = assetId;
+      break;
+    }
+  }
+
+  if (!targetStream) {
+    console.error('Received binary data but no stream is expecting it');
+    return;
+  }
+
+  const chunkMeta = targetStream.currentChunkMeta;
+  const chunkData = new Uint8Array(arrayBuffer);
+
+  // Copy chunk data into the buffer at the correct offset
+  targetStream.buffer.set(chunkData, chunkMeta.offset);
+  targetStream.receivedChunks++;
+
+  console.log(`Received binary chunk ${chunkMeta.chunkIndex} of ${targetAssetId} (${chunkData.length} bytes)`);
+
+  // Reset binary expectation flag
+  targetStream.expectingBinary = false;
+  targetStream.currentChunkMeta = null;
+
+  // Update status
+  updateStatus('asset-status',
+    `Downloading (${targetStream.receivedChunks}/${targetStream.totalChunks})`,
+    'pending');
+}
+
+function handleAssetComplete(data) {
+  const stream = assetStreams.get(data.assetId);
+  if (!stream) {
+    console.error('Received completion for unknown asset:', data.assetId);
+    return;
+  }
+
+  console.log(`Asset download complete: ${data.assetId}`);
+
+  // Create blob from buffer
+  const blob = new Blob([stream.buffer], { type: 'model/gltf-binary' });
+  const url = URL.createObjectURL(blob);
+
+  // Load the GLB model
+  loadGLBModel(url, data.assetId);
+
+  // Clean up
+  assetStreams.delete(data.assetId);
+  updateStatus('asset-status', 'Loaded', 'connected');
+}
+
+function loadGLBModel(url, assetId) {
+  console.log('Loading GLB model:', assetId);
+
+  gltfLoader.load(
+    url,
+    (gltf) => {
+      console.log('GLB model loaded successfully:', assetId);
+
+      // Remove the old cube
+      if (cube) {
+        scene.remove(cube);
+      }
+
+      // Add the loaded model to the scene
+      const model = gltf.scene;
+      model.position.set(0, 0, 0);
+      scene.add(model);
+
+      // Store reference for animation
+      cube = model;
+
+      console.log('Model added to scene');
+      URL.revokeObjectURL(url);
+    },
+    (progress) => {
+      console.log('Loading progress:', progress);
+    },
+    (error) => {
+      console.error('Error loading GLB model:', error);
+      updateStatus('asset-status', 'Load Error', 'disconnected');
+      URL.revokeObjectURL(url);
+    }
+  );
 }
 
 initThreeJS();
