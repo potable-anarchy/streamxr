@@ -423,7 +423,7 @@ function loadGLBModel(url, assetId, lod) {
       
       // Store asset metadata for adaptive streaming
       model.userData.assetId = assetId;
-      model.userData.lod = stream.lod;
+      model.userData.lod = lod;
 
       // Add a material to the model since GLB doesn't have one
       model.traverse((child) => {
