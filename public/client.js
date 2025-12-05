@@ -1,8 +1,13 @@
 let scene, camera, renderer, cube;
 let ws;
 let clientId;
+let clientColor;
 let peers = new Map();
 let gltfLoader;
+
+// Multiuser state
+let avatars = new Map(); // Store avatar meshes for other users
+let userPositions = new Map(); // Store positions of other users
 
 // Asset streaming state
 let assetStreams = new Map(); // Track incoming asset streams
@@ -131,15 +136,27 @@ function handleSignalingMessage(data) {
   switch (data.type) {
     case "welcome":
       clientId = data.id;
+      clientColor = data.color;
       document.getElementById("client-id").textContent = clientId.substring(
         0,
         8,
       );
-      console.log("Client ID:", clientId);
+      console.log("Client ID:", clientId, "Color:", clientColor);
 
       data.peers.forEach((peerId) => {
         createPeerConnection(peerId, true);
       });
+
+      // Create avatars for existing users
+      if (data.userPositions) {
+        Object.keys(data.userPositions).forEach((userId) => {
+          if (userId !== clientId) {
+            const userData = data.userPositions[userId];
+            createAvatar(userId, userData.color);
+            updateAvatarPosition(userId, userData);
+          }
+        });
+      }
 
       // Request an asset after connection (adaptive streaming will select LOD)
       setTimeout(() => requestAsset("cube"), 1000);
@@ -147,6 +164,7 @@ function handleSignalingMessage(data) {
 
     case "peer-connected":
       console.log("Peer connected:", data.peerId);
+      createAvatar(data.peerId, data.color);
       break;
 
     case "peer-disconnected":
@@ -156,6 +174,15 @@ function handleSignalingMessage(data) {
         peers.delete(data.peerId);
         updatePeerCount();
       }
+      removeAvatar(data.peerId);
+      break;
+
+    case "user-position":
+      updateAvatarPosition(data.userId, {
+        position: data.position,
+        rotation: data.rotation,
+        quaternion: data.quaternion,
+      });
       break;
 
     case "signal":
@@ -272,6 +299,102 @@ function updateStatus(elementId, text, className) {
     element.textContent = text;
     element.className = className;
   }
+}
+
+// Avatar management functions
+
+function createAvatar(userId, color) {
+  if (avatars.has(userId)) {
+    console.log("Avatar already exists for user:", userId);
+    return;
+  }
+
+  console.log("Creating avatar for user:", userId, "with color:", color);
+
+  const avatarGroup = new THREE.Group();
+
+  // Create a simple avatar (sphere for head, cylinder for body)
+  const headGeometry = new THREE.SphereGeometry(0.2, 16, 16);
+  const headMaterial = new THREE.MeshStandardMaterial({
+    color: color || 0xff6b6b,
+    roughness: 0.5,
+    metalness: 0.3,
+  });
+  const head = new THREE.Mesh(headGeometry, headMaterial);
+  head.position.y = 0.3;
+
+  const bodyGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.5, 16);
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: color || 0xff6b6b,
+    roughness: 0.5,
+    metalness: 0.3,
+  });
+  const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+  body.position.y = -0.05;
+
+  // Add a small indicator above the avatar
+  const indicatorGeometry = new THREE.ConeGeometry(0.1, 0.2, 8);
+  const indicatorMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+  });
+  const indicator = new THREE.Mesh(indicatorGeometry, indicatorMaterial);
+  indicator.position.y = 0.7;
+  indicator.rotation.x = Math.PI;
+
+  avatarGroup.add(head);
+  avatarGroup.add(body);
+  avatarGroup.add(indicator);
+
+  // Add user ID label (optional, can be added with canvas texture)
+  avatarGroup.userData.userId = userId;
+  avatarGroup.userData.color = color;
+
+  scene.add(avatarGroup);
+  avatars.set(userId, avatarGroup);
+
+  console.log("Avatar created and added to scene for user:", userId);
+}
+
+function removeAvatar(userId) {
+  const avatar = avatars.get(userId);
+  if (avatar) {
+    scene.remove(avatar);
+    avatars.delete(userId);
+    userPositions.delete(userId);
+    console.log("Avatar removed for user:", userId);
+  }
+}
+
+function updateAvatarPosition(userId, positionData) {
+  const avatar = avatars.get(userId);
+  if (!avatar) {
+    return;
+  }
+
+  if (positionData.position) {
+    avatar.position.set(
+      positionData.position[0],
+      positionData.position[1],
+      positionData.position[2],
+    );
+  }
+
+  if (positionData.quaternion) {
+    avatar.quaternion.set(
+      positionData.quaternion[0],
+      positionData.quaternion[1],
+      positionData.quaternion[2],
+      positionData.quaternion[3],
+    );
+  } else if (positionData.rotation) {
+    avatar.rotation.set(
+      positionData.rotation[0],
+      positionData.rotation[1],
+      positionData.rotation[2],
+    );
+  }
+
+  userPositions.set(userId, positionData);
 }
 
 // Asset Streaming Functions

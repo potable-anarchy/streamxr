@@ -5,6 +5,7 @@ const path = require("path");
 const AssetManager = require("./lib/assetManager");
 const AdaptiveStreamingManager = require("./lib/adaptiveStreaming");
 const FoveatedStreamingManager = require("./lib/foveatedStreaming");
+const RoomManager = require("./lib/roomManager");
 
 const app = express();
 const server = http.createServer(app);
@@ -16,6 +17,7 @@ const clients = new Map();
 const assetManager = new AssetManager();
 const adaptiveStreaming = new AdaptiveStreamingManager();
 const foveatedStreaming = new FoveatedStreamingManager();
+const roomManager = new RoomManager();
 
 // Asset streaming configuration
 const CHUNK_SIZE = 16 * 1024; // 16KB chunks
@@ -23,6 +25,8 @@ const CHUNK_SIZE = 16 * 1024; // 16KB chunks
 wss.on("connection", (ws) => {
   const clientId = generateId();
   clients.set(clientId, ws);
+
+  const roomInfo = roomManager.addUser(clientId, ws);
 
   console.log(`Client ${clientId} connected. Total clients: ${clients.size}`);
 
@@ -53,6 +57,9 @@ wss.on("connection", (ws) => {
       } else if (data.type === "head-tracking") {
         // Update client head tracking for foveated streaming
         handleHeadTracking(clientId, data);
+      } else if (data.type === "position-update") {
+        // Handle position updates for multiuser
+        handlePositionUpdate(clientId, data);
       }
     } catch (error) {
       console.error("Error parsing message:", error);
@@ -60,6 +67,7 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
+    const room = roomManager.removeUser(clientId);
     clients.delete(clientId);
     adaptiveStreaming.removeClient(clientId);
     foveatedStreaming.removeClient(clientId);
@@ -73,17 +81,22 @@ wss.on("connection", (ws) => {
     });
   });
 
+  const userPosition = roomManager.getUserPosition(clientId);
+
   ws.send(
     JSON.stringify({
       type: "welcome",
       id: clientId,
-      peers: Array.from(clients.keys()).filter((id) => id !== clientId),
+      peers: roomInfo.users,
+      color: userPosition.color,
+      userPositions: roomManager.getAllUserPositions(),
     }),
   );
 
   broadcastToOthers(clientId, {
     type: "peer-connected",
     peerId: clientId,
+    color: userPosition.color,
   });
 });
 
@@ -233,14 +246,57 @@ function handleHeadTracking(clientId, data) {
     fov: data.fov,
   });
 
-  // Optional: Log head tracking updates (can be verbose)
-  // console.log(`Updated head tracking for client ${clientId}`);
+  // Update room manager with position for multiuser support
+  roomManager.updateUserPosition(clientId, {
+    position: data.position,
+    rotation: data.rotation,
+    quaternion: data.quaternion,
+  });
+
+  // Broadcast position to other users in the same room
+  broadcastToRoom(clientId, {
+    type: "user-position",
+    userId: clientId,
+    position: data.position,
+    rotation: data.rotation,
+    quaternion: data.quaternion,
+  });
+}
+
+function handlePositionUpdate(clientId, data) {
+  // Update user position in room manager
+  roomManager.updateUserPosition(clientId, {
+    position: data.position,
+    rotation: data.rotation,
+    quaternion: data.quaternion,
+  });
+
+  // Broadcast to other users in the same room
+  broadcastToRoom(clientId, {
+    type: "user-position",
+    userId: clientId,
+    position: data.position,
+    rotation: data.rotation,
+    quaternion: data.quaternion,
+  });
 }
 
 function broadcastToOthers(excludeId, message) {
   const messageStr = JSON.stringify(message);
   clients.forEach((client, id) => {
     if (id !== excludeId && client.readyState === WebSocket.OPEN) {
+      client.send(messageStr);
+    }
+  });
+}
+
+function broadcastToRoom(excludeId, message) {
+  const usersInRoom = roomManager.getUsersInSameRoom(excludeId);
+  const messageStr = JSON.stringify(message);
+
+  usersInRoom.forEach((userId) => {
+    const client = clients.get(userId);
+    if (client && client.readyState === WebSocket.OPEN) {
       client.send(messageStr);
     }
   });

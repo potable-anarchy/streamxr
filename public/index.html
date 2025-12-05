@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebRTC + Three.js - Phase 3: Adaptive Streaming</title>
+  <title>WebRTC + Three.js - Phase 5: Multiuser Support</title>
   <style>
     body {
       margin: 0;
@@ -48,8 +48,8 @@
   <div id="canvas-container"></div>
 
   <div id="info">
-    <div><strong>WebRTC + Three.js Phase 3</strong></div>
-    <div><em>Adaptive Streaming</em></div>
+    <div><strong>WebRTC + Three.js Phase 5</strong></div>
+    <div><em>Multiuser Support</em></div>
     <div id="status">
       <div class="status-item">WebSocket: <span id="ws-status" class="disconnected">Disconnected</span></div>
       <div class="status-item">Client ID: <span id="client-id">-</span></div>
@@ -57,6 +57,9 @@
       <div class="status-item">Asset Status: <span id="asset-status">-</span></div>
       <div class="status-item">Binary Data: <span id="binary-status">-</span></div>
       <div class="status-item">Current LOD: <span id="lod-indicator" class="pending">LOW</span></div>
+    </div>
+    <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.3);">
+      <div style="font-size: 12px; opacity: 0.8;">WASD: Move | Mouse Drag: Look Around</div>
     </div>
   </div>
 
