@@ -4,6 +4,7 @@ const WebSocket = require("ws");
 const path = require("path");
 const AssetManager = require("./lib/assetManager");
 const AdaptiveStreamingManager = require("./lib/adaptiveStreaming");
+const FoveatedStreamingManager = require("./lib/foveatedStreaming");
 
 const app = express();
 const server = http.createServer(app);
@@ -14,6 +15,7 @@ app.use(express.static("public"));
 const clients = new Map();
 const assetManager = new AssetManager();
 const adaptiveStreaming = new AdaptiveStreamingManager();
+const foveatedStreaming = new FoveatedStreamingManager();
 
 // Asset streaming configuration
 const CHUNK_SIZE = 16 * 1024; // 16KB chunks
@@ -48,6 +50,9 @@ wss.on("connection", (ws) => {
       } else if (data.type === "bandwidth-metrics") {
         // Update client bandwidth metrics
         handleBandwidthMetrics(clientId, data.metrics);
+      } else if (data.type === "head-tracking") {
+        // Update client head tracking for foveated streaming
+        handleHeadTracking(clientId, data);
       }
     } catch (error) {
       console.error("Error parsing message:", error);
@@ -57,6 +62,7 @@ wss.on("connection", (ws) => {
   ws.on("close", () => {
     clients.delete(clientId);
     adaptiveStreaming.removeClient(clientId);
+    foveatedStreaming.removeClient(clientId);
     console.log(
       `Client ${clientId} disconnected. Total clients: ${clients.size}`,
     );
@@ -88,14 +94,45 @@ async function handleAssetRequest(clientId, ws, assetId, requestedLod) {
     // Determine LOD - use adaptive selection if not specified
     let lod = requestedLod || "high";
 
-    // Apply adaptive streaming if no specific LOD requested
+    // Apply foveated streaming first (takes priority over bandwidth-based adaptive streaming)
+    // Default object position (can be extended to track multiple objects)
+    const objectPosition = [0, 0, -2];
+    const foveatedResult = foveatedStreaming.getAssetLOD(
+      clientId,
+      assetId,
+      objectPosition,
+    );
+
     if (!requestedLod) {
-      const selectedAsset = adaptiveStreaming.selectLOD(clientId, assetId);
-      // Extract LOD from selected asset (e.g., "sphere-high" -> "high")
-      lod = selectedAsset.endsWith("-high") ? "high" : "low";
-      console.log(
-        `Client ${clientId} requested ${assetId}, adaptive streaming selected ${lod} LOD`,
-      );
+      // Check if foveated streaming wants to skip this asset
+      if (foveatedResult.lod === "skip") {
+        console.log(
+          `Client ${clientId} requested ${assetId}, foveated streaming skipped (object not in view)`,
+        );
+        ws.send(
+          JSON.stringify({
+            type: "asset_skipped",
+            assetId: assetId,
+            reason: "Object not in view frustum",
+          }),
+        );
+        return;
+      }
+
+      // Use foveated LOD if available, otherwise fall back to adaptive streaming
+      if (foveatedResult.lod) {
+        lod = foveatedResult.lod;
+        console.log(
+          `Client ${clientId} requested ${assetId}, foveated streaming selected ${lod} LOD`,
+        );
+      } else {
+        // Fall back to bandwidth-based adaptive streaming
+        const selectedAsset = adaptiveStreaming.selectLOD(clientId, assetId);
+        lod = selectedAsset.endsWith("-high") ? "high" : "low";
+        console.log(
+          `Client ${clientId} requested ${assetId}, adaptive streaming selected ${lod} LOD`,
+        );
+      }
     } else {
       console.log(`Client ${clientId} requested asset: ${assetId} (LOD: ${lod})`);
     }
@@ -185,6 +222,19 @@ function handleBandwidthMetrics(clientId, metrics) {
       }),
     );
   }
+}
+
+function handleHeadTracking(clientId, data) {
+  // Update foveated streaming with client view data
+  foveatedStreaming.updateClientView(clientId, {
+    position: data.position,
+    rotation: data.rotation,
+    quaternion: data.quaternion,
+    fov: data.fov,
+  });
+
+  // Optional: Log head tracking updates (can be verbose)
+  // console.log(`Updated head tracking for client ${clientId}`);
 }
 
 function broadcastToOthers(excludeId, message) {

@@ -18,6 +18,13 @@ let bandwidthMonitor = {
   recommendedLOD: "low",
 };
 
+// Head tracking state
+let headTracking = {
+  enabled: false,
+  lastSentTime: 0,
+  sendInterval: 100, // Send head position every 100ms
+};
+
 function initThreeJS() {
   const container = document.getElementById("canvas-container");
 
@@ -67,6 +74,9 @@ function animate() {
     cube.rotation.x += 0.01;
     cube.rotation.y += 0.01;
   }
+
+  // Send head tracking data periodically
+  sendHeadTrackingData();
 
   renderer.render(scene, camera);
 }
@@ -535,5 +545,185 @@ function getCurrentAssetLOD() {
   return null;
 }
 
+// Head tracking functions
+
+/**
+ * Send head/camera tracking data to server for foveated streaming
+ */
+function sendHeadTrackingData() {
+  // Only send if WebSocket is connected and enough time has passed
+  const now = Date.now();
+  if (
+    !ws ||
+    ws.readyState !== WebSocket.OPEN ||
+    now - headTracking.lastSentTime < headTracking.sendInterval
+  ) {
+    return;
+  }
+
+  headTracking.lastSentTime = now;
+
+  // Get camera position and rotation
+  const position = [camera.position.x, camera.position.y, camera.position.z];
+
+  // Get camera rotation as Euler angles (in radians)
+  const rotation = [camera.rotation.x, camera.rotation.y, camera.rotation.z];
+
+  // Get camera quaternion (more accurate for 3D rotations)
+  const quaternion = [
+    camera.quaternion.x,
+    camera.quaternion.y,
+    camera.quaternion.z,
+    camera.quaternion.w,
+  ];
+
+  // Send to server
+  ws.send(
+    JSON.stringify({
+      type: "head-tracking",
+      position: position,
+      rotation: rotation,
+      quaternion: quaternion,
+      fov: camera.fov,
+      timestamp: now,
+    }),
+  );
+}
+
+/**
+ * Enable head tracking for foveated streaming
+ */
+function enableHeadTracking() {
+  headTracking.enabled = true;
+  console.log("Head tracking enabled for foveated streaming");
+}
+
+/**
+ * Disable head tracking
+ */
+function disableHeadTracking() {
+  headTracking.enabled = false;
+  console.log("Head tracking disabled");
+}
+
+/**
+ * Initialize WebXR support for VR head tracking
+ * This enables more accurate head tracking in VR mode
+ */
+function initWebXR() {
+  if (!navigator.xr) {
+    console.log("WebXR not supported in this browser");
+    return;
+  }
+
+  // Check for VR support
+  navigator.xr.isSessionSupported("immersive-vr").then((supported) => {
+    if (supported) {
+      console.log("VR supported, WebXR available");
+      // Add VR button if supported
+      const vrButton = document.createElement("button");
+      vrButton.textContent = "Enter VR";
+      vrButton.style.position = "absolute";
+      vrButton.style.bottom = "20px";
+      vrButton.style.left = "20px";
+      vrButton.style.zIndex = "999";
+      vrButton.onclick = enterVR;
+      document.body.appendChild(vrButton);
+    } else {
+      console.log("VR not supported, using desktop head tracking");
+    }
+  });
+}
+
+/**
+ * Enter VR mode with WebXR
+ */
+async function enterVR() {
+  try {
+    const session = await navigator.xr.requestSession("immersive-vr");
+    renderer.xr.enabled = true;
+    await renderer.xr.setSession(session);
+
+    console.log("Entered VR mode");
+
+    // Enable head tracking for VR
+    enableHeadTracking();
+
+    session.addEventListener("end", () => {
+      console.log("VR session ended");
+      disableHeadTracking();
+    });
+  } catch (error) {
+    console.error("Failed to enter VR:", error);
+  }
+}
+
+/**
+ * Enable basic camera controls for testing head tracking without VR
+ */
+function enableCameraControls() {
+  let isDragging = false;
+  let previousMousePosition = { x: 0, y: 0 };
+
+  renderer.domElement.addEventListener("mousedown", (e) => {
+    isDragging = true;
+    previousMousePosition = { x: e.clientX, y: e.clientY };
+  });
+
+  renderer.domElement.addEventListener("mousemove", (e) => {
+    if (!isDragging) return;
+
+    const deltaX = e.clientX - previousMousePosition.x;
+    const deltaY = e.clientY - previousMousePosition.y;
+
+    // Rotate camera
+    camera.rotation.y += deltaX * 0.005;
+    camera.rotation.x += deltaY * 0.005;
+
+    // Clamp pitch to prevent flipping
+    camera.rotation.x = Math.max(
+      -Math.PI / 2,
+      Math.min(Math.PI / 2, camera.rotation.x),
+    );
+
+    previousMousePosition = { x: e.clientX, y: e.clientY };
+  });
+
+  renderer.domElement.addEventListener("mouseup", () => {
+    isDragging = false;
+  });
+
+  // WASD movement
+  const keys = {};
+  document.addEventListener("keydown", (e) => {
+    keys[e.key.toLowerCase()] = true;
+  });
+
+  document.addEventListener("keyup", (e) => {
+    keys[e.key.toLowerCase()] = false;
+  });
+
+  // Update camera position based on keys
+  setInterval(() => {
+    const moveSpeed = 0.1;
+    const forward = new THREE.Vector3(0, 0, -1);
+    const right = new THREE.Vector3(1, 0, 0);
+
+    forward.applyQuaternion(camera.quaternion);
+    right.applyQuaternion(camera.quaternion);
+
+    if (keys["w"]) camera.position.add(forward.multiplyScalar(moveSpeed));
+    if (keys["s"])
+      camera.position.add(forward.multiplyScalar(-moveSpeed));
+    if (keys["a"]) camera.position.add(right.multiplyScalar(-moveSpeed));
+    if (keys["d"]) camera.position.add(right.multiplyScalar(moveSpeed));
+  }, 16);
+
+  console.log("Camera controls enabled (WASD + mouse drag)");
+}
+
 initThreeJS();
 initWebSocket();
+initWebXR();
+enableCameraControls();
+enableHeadTracking();
