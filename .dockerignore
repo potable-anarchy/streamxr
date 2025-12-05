@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+README.md
+DESIGN.md
+DEVPOST_DRAFT.md
+TEAM_REGISTRATION.md
+.DS_Store
