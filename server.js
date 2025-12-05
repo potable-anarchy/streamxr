@@ -2,6 +2,7 @@ const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
 const path = require("path");
+const promClient = require("prom-client");
 const AssetManager = require("./lib/assetManager");
 const AdaptiveStreamingManager = require("./lib/adaptiveStreaming");
 const FoveatedStreamingManager = require("./lib/foveatedStreaming");
@@ -14,7 +15,59 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.static("public"));
 app.use(express.json());
-app.use(express.raw({ type: 'model/gltf-binary', limit: '50mb' }));
+app.use(express.raw({ type: "model/gltf-binary", limit: "50mb" }));
+
+// Prometheus metrics setup
+const register = new promClient.Registry();
+promClient.collectDefaultMetrics({ register });
+
+// Custom metrics
+const wsConnections = new promClient.Gauge({
+  name: "streamxr_websocket_connections",
+  help: "Number of active WebSocket connections",
+  registers: [register],
+});
+
+const roomUsers = new promClient.Gauge({
+  name: "streamxr_room_users",
+  help: "Number of users per room",
+  labelNames: ["room"],
+  registers: [register],
+});
+
+const assetRequests = new promClient.Counter({
+  name: "streamxr_asset_requests_total",
+  help: "Total number of asset requests",
+  labelNames: ["asset", "lod"],
+  registers: [register],
+});
+
+const assetBytesTransferred = new promClient.Counter({
+  name: "streamxr_asset_bytes_transferred_total",
+  help: "Total bytes transferred for assets",
+  labelNames: ["asset"],
+  registers: [register],
+});
+
+const bandwidthGauge = new promClient.Gauge({
+  name: "streamxr_client_bandwidth_bps",
+  help: "Client bandwidth in bits per second",
+  labelNames: ["client_id"],
+  registers: [register],
+});
+
+const objectCount = new promClient.Gauge({
+  name: "streamxr_shared_objects_total",
+  help: "Total number of shared objects",
+  labelNames: ["room"],
+  registers: [register],
+});
+
+// Metrics endpoint
+app.get("/metrics", async (req, res) => {
+  res.set("Content-Type", register.contentType);
+  res.end(await register.metrics());
+});
 
 const clients = new Map();
 const assetManager = new AssetManager();
@@ -31,6 +84,10 @@ wss.on("connection", (ws) => {
   clients.set(clientId, ws);
 
   const roomInfo = roomManager.addUser(clientId, ws);
+
+  // Update metrics
+  wsConnections.set(clients.size);
+  roomUsers.set({ room: roomInfo.roomId }, roomInfo.users.size);
 
   console.log(`Client ${clientId} connected. Total clients: ${clients.size}`);
 
@@ -87,6 +144,15 @@ wss.on("connection", (ws) => {
     clients.delete(clientId);
     adaptiveStreaming.removeClient(clientId);
     foveatedStreaming.removeClient(clientId);
+
+    // Update metrics
+    wsConnections.set(clients.size);
+    if (room && room.roomId) {
+      const roomInfo = roomManager.getRoom(room.roomId);
+      roomUsers.set({ room: room.roomId }, roomInfo ? roomInfo.users.size : 0);
+    }
+    bandwidthGauge.remove({ client_id: clientId });
+
     console.log(
       `Client ${clientId} disconnected. Total clients: ${clients.size}`,
     );
@@ -122,6 +188,9 @@ async function handleAssetRequest(clientId, ws, assetId, requestedLod) {
 
     // Determine LOD - use adaptive selection if not specified
     let lod = requestedLod || "high";
+
+    // Track asset request metric
+    assetRequests.inc({ asset: assetId, lod: lod });
 
     // Apply foveated streaming first (takes priority over bandwidth-based adaptive streaming)
     // Default object position (can be extended to track multiple objects)
@@ -163,7 +232,9 @@ async function handleAssetRequest(clientId, ws, assetId, requestedLod) {
         );
       }
     } else {
-      console.log(`Client ${clientId} requested asset: ${assetId} (LOD: ${lod})`);
+      console.log(
+        `Client ${clientId} requested asset: ${assetId} (LOD: ${lod})`,
+      );
     }
 
     const assetBuffer = assetManager.getAsset(assetId, lod);
@@ -214,7 +285,14 @@ async function handleAssetRequest(clientId, ws, assetId, requestedLod) {
 
     // Update bandwidth metrics based on transfer
     const transferDuration = Date.now() - startTime;
-    adaptiveStreaming.updateMetrics(clientId, assetBuffer.length, transferDuration);
+    adaptiveStreaming.updateMetrics(
+      clientId,
+      assetBuffer.length,
+      transferDuration,
+    );
+
+    // Track bytes transferred
+    assetBytesTransferred.inc({ asset: assetId }, assetBuffer.length);
 
     console.log(
       `Completed streaming asset ${assetId} (${lod}) to client ${clientId} in ${transferDuration}ms`,
@@ -235,11 +313,13 @@ async function handleAssetRequest(clientId, ws, assetId, requestedLod) {
 function handleBandwidthMetrics(clientId, metrics) {
   console.log(`Received bandwidth metrics from client ${clientId}:`, metrics);
 
+  // Update bandwidth gauge
+  if (metrics.bandwidth) {
+    bandwidthGauge.set({ client_id: clientId }, metrics.bandwidth * 8); // Convert bytes/s to bits/s
+  }
+
   // Get recommended LOD based on client-reported metrics
-  const recommendedLOD = adaptiveStreaming.getRecommendedLOD(
-    clientId,
-    metrics,
-  );
+  const recommendedLOD = adaptiveStreaming.getRecommendedLOD(clientId, metrics);
 
   // Send recommendation back to client
   const ws = clients.get(clientId);
@@ -341,6 +421,10 @@ function handleCreateObject(roomId, objectData) {
   try {
     const createdObject = objectSync.createObject(roomId, objectData);
 
+    // Update object count metric
+    const objects = objectSync.getObjects(roomId);
+    objectCount.set({ room: roomId }, objects.length);
+
     // Broadcast to all clients
     broadcastToAll({
       type: "object-created",
@@ -374,6 +458,10 @@ function handleDeleteObject(roomId, objectId) {
     const deleted = objectSync.deleteObject(roomId, objectId);
 
     if (deleted) {
+      // Update object count metric
+      const objects = objectSync.getObjects(roomId);
+      objectCount.set({ room: roomId }, objects.length);
+
       // Broadcast to all clients
       broadcastToAll({
         type: "object-deleted",
@@ -431,7 +519,7 @@ app.post("/api/assets/upload", async (req, res) => {
     console.error("Asset upload error:", error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -469,7 +557,7 @@ app.delete("/api/assets/:assetId", async (req, res) => {
 
     res.json({
       success: true,
-      message: `Asset ${req.params.assetId} removed`
+      message: `Asset ${req.params.assetId} removed`,
     });
 
     // Notify all connected clients
@@ -480,7 +568,7 @@ app.delete("/api/assets/:assetId", async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -504,7 +592,9 @@ const PORT = process.env.PORT || 3000;
 
     server.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);
-      console.log(`Upload assets via: POST http://localhost:${PORT}/api/assets/upload?assetId=<id>`);
+      console.log(
+        `Upload assets via: POST http://localhost:${PORT}/api/assets/upload?assetId=<id>`,
+      );
     });
   } catch (error) {
     console.error("Failed to start server:", error);

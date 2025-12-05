@@ -1,0 +1,149 @@
+{
+  "dashboard": {
+    "title": "StreamXR Monitoring",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active WebSocket Connections",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "streamxr_websocket_connections",
+            "refId": "A",
+            "legendFormat": "Active Connections"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Connections"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Users Per Room",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "streamxr_room_users",
+            "refId": "A",
+            "legendFormat": "Room: {{room}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Users"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Asset Requests Rate",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(streamxr_asset_requests_total[5m])",
+            "refId": "A",
+            "legendFormat": "{{asset}} ({{lod}})"
+          }
+        ],
+        "yaxes": [
+          {"format": "reqps", "label": "Requests/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Asset Data Transfer Rate",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(streamxr_asset_bytes_transferred_total[5m])",
+            "refId": "A",
+            "legendFormat": "{{asset}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "Bps", "label": "Bytes/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Client Bandwidth",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "streamxr_client_bandwidth_bps",
+            "refId": "A",
+            "legendFormat": "Client {{client_id}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "bps", "label": "Bandwidth (bits/sec)"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Shared Objects Count",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "streamxr_shared_objects_total",
+            "refId": "A",
+            "legendFormat": "Room: {{room}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Objects"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 7,
+        "title": "CPU Usage",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(process_cpu_seconds_total[5m]) * 100",
+            "refId": "A",
+            "legendFormat": "CPU %"
+          }
+        ],
+        "yaxes": [
+          {"format": "percent", "label": "CPU"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Memory Usage",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "process_resident_memory_bytes",
+            "refId": "A",
+            "legendFormat": "Memory"
+          }
+        ],
+        "yaxes": [
+          {"format": "bytes", "label": "Memory"},
+          {"format": "short"}
+        ]
+      }
+    ],
+    "refresh": "5s",
+    "time": {"from": "now-1h", "to": "now"},
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 0
+  },
+  "overwrite": true
+}
