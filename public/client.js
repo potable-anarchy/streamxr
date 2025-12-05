@@ -5,6 +5,22 @@ let clientColor;
 let peers = new Map();
 let gltfLoader;
 
+// WebSocket reconnection state
+let wsReconnection = {
+  attempts: 0,
+  maxAttempts: 10,
+  baseDelay: 1000, // Start with 1 second
+  maxDelay: 30000, // Cap at 30 seconds
+  isReconnecting: false,
+  connectionTimeout: null,
+};
+
+// Detect iOS Safari for platform-specific handling
+const isIOSSafari =
+  /iPhone|iPad|iPod/.test(navigator.userAgent) &&
+  /Safari/.test(navigator.userAgent) &&
+  !/CriOS|FxiOS|OPiOS/.test(navigator.userAgent);
+
 // Multiuser state
 let avatars = new Map(); // Store avatar meshes for other users
 let userPositions = new Map(); // Store positions of other users
@@ -98,14 +114,50 @@ function onWindowResize() {
 
 function initWebSocket() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(`${protocol}//${window.location.host}`);
+  const wsUrl = `${protocol}//${window.location.host}`;
+
+  console.log(
+    `[WebSocket] Attempting connection to ${wsUrl} (attempt ${wsReconnection.attempts + 1}/${wsReconnection.maxAttempts})`,
+  );
+  if (isIOSSafari) {
+    console.log("[WebSocket] iOS Safari detected - using extended timeout");
+  }
+
+  try {
+    ws = new WebSocket(wsUrl);
+  } catch (error) {
+    console.error("[WebSocket] Failed to create WebSocket:", error);
+    scheduleReconnect();
+    return;
+  }
 
   // Set binary type to arraybuffer for easier handling
   ws.binaryType = "arraybuffer";
 
+  // Set connection timeout (iOS Safari needs more time)
+  const timeoutDuration = isIOSSafari ? 10000 : 5000;
+  wsReconnection.connectionTimeout = setTimeout(() => {
+    if (ws.readyState !== WebSocket.OPEN) {
+      console.error(
+        `[WebSocket] Connection timeout after ${timeoutDuration}ms`,
+      );
+      ws.close();
+    }
+  }, timeoutDuration);
+
   ws.onopen = () => {
-    console.log("WebSocket connected");
+    console.log("[WebSocket] Connected successfully");
     updateStatus("ws-status", "Connected", "connected");
+
+    // Clear connection timeout
+    if (wsReconnection.connectionTimeout) {
+      clearTimeout(wsReconnection.connectionTimeout);
+      wsReconnection.connectionTimeout = null;
+    }
+
+    // Reset reconnection state on successful connection
+    wsReconnection.attempts = 0;
+    wsReconnection.isReconnecting = false;
   };
 
   ws.onmessage = (event) => {
@@ -124,14 +176,62 @@ function initWebSocket() {
     }
   };
 
-  ws.onclose = () => {
-    console.log("WebSocket disconnected");
+  ws.onclose = (event) => {
+    console.log(
+      `[WebSocket] Disconnected (code: ${event.code}, reason: ${event.reason || "none"})`,
+    );
     updateStatus("ws-status", "Disconnected", "disconnected");
+
+    // Clean up peer connections
+    peers.forEach((peer) => peer.destroy());
+    peers.clear();
+    updatePeerCount();
+
+    // Attempt reconnection
+    scheduleReconnect();
   };
 
   ws.onerror = (error) => {
-    console.error("WebSocket error:", error);
+    console.error("[WebSocket] Error:", error);
+    // Note: onerror is always followed by onclose, so reconnection is handled there
   };
+}
+
+function scheduleReconnect() {
+  // Don't reconnect if already reconnecting or max attempts reached
+  if (wsReconnection.isReconnecting) {
+    console.log("[WebSocket] Reconnection already scheduled");
+    return;
+  }
+
+  if (wsReconnection.attempts >= wsReconnection.maxAttempts) {
+    console.error(
+      `[WebSocket] Max reconnection attempts (${wsReconnection.maxAttempts}) reached. Please refresh the page.`,
+    );
+    updateStatus("ws-status", "Failed (refresh page)", "disconnected");
+    return;
+  }
+
+  wsReconnection.isReconnecting = true;
+  wsReconnection.attempts++;
+
+  // Exponential backoff: delay = baseDelay * 2^attempts (capped at maxDelay)
+  const delay = Math.min(
+    wsReconnection.baseDelay * Math.pow(2, wsReconnection.attempts - 1),
+    wsReconnection.maxDelay,
+  );
+
+  console.log(`[WebSocket] Reconnecting in ${delay}ms...`);
+  updateStatus(
+    "ws-status",
+    `Reconnecting (${wsReconnection.attempts}/${wsReconnection.maxAttempts})...`,
+    "pending",
+  );
+
+  setTimeout(() => {
+    wsReconnection.isReconnecting = false;
+    initWebSocket();
+  }, delay);
 }
 
 function handleSignalingMessage(data) {
@@ -576,7 +676,7 @@ function loadGLBModel(url, assetId, lod) {
       const model = gltf.scene;
       model.position.set(0, 0, -2); // Move back from camera
       model.scale.set(1.5, 1.5, 1.5); // Scale up
-      
+
       // Store asset metadata for adaptive streaming
       model.userData.assetId = assetId;
       model.userData.lod = lod;
@@ -859,8 +959,7 @@ function enableCameraControls() {
     right.applyQuaternion(camera.quaternion);
 
     if (keys["w"]) camera.position.add(forward.multiplyScalar(moveSpeed));
-    if (keys["s"])
-      camera.position.add(forward.multiplyScalar(-moveSpeed));
+    if (keys["s"]) camera.position.add(forward.multiplyScalar(-moveSpeed));
     if (keys["a"]) camera.position.add(right.multiplyScalar(-moveSpeed));
     if (keys["d"]) camera.position.add(right.multiplyScalar(moveSpeed));
   }, 16);
@@ -986,7 +1085,12 @@ function createLocalObject(objectData) {
 /**
  * Update object position (called during drag or manipulation)
  */
-function updateObjectPosition(objectId, position, rotation = null, scale = null) {
+function updateObjectPosition(
+  objectId,
+  position,
+  rotation = null,
+  scale = null,
+) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
   const updateData = { position };
