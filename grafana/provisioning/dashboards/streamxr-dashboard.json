@@ -1,149 +1,199 @@
 {
-  "dashboard": {
-    "title": "StreamXR Monitoring",
-    "panels": [
-      {
-        "id": 1,
-        "title": "Active WebSocket Connections",
-        "type": "graph",
-        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
-        "targets": [
-          {
-            "expr": "streamxr_websocket_connections",
-            "refId": "A",
-            "legendFormat": "Active Connections"
-          }
-        ],
-        "yaxes": [
-          {"format": "short", "label": "Connections"},
-          {"format": "short"}
-        ]
+  "title": "StreamXR Monitoring",
+  "tags": ["streamxr"],
+  "timezone": "browser",
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Active WebSocket Connections",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "streamxr_websocket_connections",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
       },
-      {
-        "id": 2,
-        "title": "Users Per Room",
-        "type": "graph",
-        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
-        "targets": [
-          {
-            "expr": "streamxr_room_users",
-            "refId": "A",
-            "legendFormat": "Room: {{room}}"
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 1, "color": "green" }
+            ]
           }
-        ],
-        "yaxes": [
-          {"format": "short", "label": "Users"},
-          {"format": "short"}
-        ]
-      },
-      {
-        "id": 3,
-        "title": "Asset Requests Rate",
-        "type": "graph",
-        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
-        "targets": [
-          {
-            "expr": "rate(streamxr_asset_requests_total[5m])",
-            "refId": "A",
-            "legendFormat": "{{asset}} ({{lod}})"
-          }
-        ],
-        "yaxes": [
-          {"format": "reqps", "label": "Requests/sec"},
-          {"format": "short"}
-        ]
-      },
-      {
-        "id": 4,
-        "title": "Asset Data Transfer Rate",
-        "type": "graph",
-        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
-        "targets": [
-          {
-            "expr": "rate(streamxr_asset_bytes_transferred_total[5m])",
-            "refId": "A",
-            "legendFormat": "{{asset}}"
-          }
-        ],
-        "yaxes": [
-          {"format": "Bps", "label": "Bytes/sec"},
-          {"format": "short"}
-        ]
-      },
-      {
-        "id": 5,
-        "title": "Client Bandwidth",
-        "type": "graph",
-        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
-        "targets": [
-          {
-            "expr": "streamxr_client_bandwidth_bps",
-            "refId": "A",
-            "legendFormat": "Client {{client_id}}"
-          }
-        ],
-        "yaxes": [
-          {"format": "bps", "label": "Bandwidth (bits/sec)"},
-          {"format": "short"}
-        ]
-      },
-      {
-        "id": 6,
-        "title": "Shared Objects Count",
-        "type": "graph",
-        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
-        "targets": [
-          {
-            "expr": "streamxr_shared_objects_total",
-            "refId": "A",
-            "legendFormat": "Room: {{room}}"
-          }
-        ],
-        "yaxes": [
-          {"format": "short", "label": "Objects"},
-          {"format": "short"}
-        ]
-      },
-      {
-        "id": 7,
-        "title": "CPU Usage",
-        "type": "graph",
-        "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
-        "targets": [
-          {
-            "expr": "rate(process_cpu_seconds_total[5m]) * 100",
-            "refId": "A",
-            "legendFormat": "CPU %"
-          }
-        ],
-        "yaxes": [
-          {"format": "percent", "label": "CPU"},
-          {"format": "short"}
-        ]
-      },
-      {
-        "id": 8,
-        "title": "Memory Usage",
-        "type": "graph",
-        "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
-        "targets": [
-          {
-            "expr": "process_resident_memory_bytes",
-            "refId": "A",
-            "legendFormat": "Memory"
-          }
-        ],
-        "yaxes": [
-          {"format": "bytes", "label": "Memory"},
-          {"format": "short"}
-        ]
+        }
       }
-    ],
-    "refresh": "5s",
-    "time": {"from": "now-1h", "to": "now"},
-    "timezone": "browser",
-    "schemaVersion": 16,
-    "version": 0
-  },
-  "overwrite": true
+    },
+    {
+      "id": 2,
+      "title": "Users Per Room",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "sum(streamxr_room_users)",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Shared Objects",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "sum(streamxr_shared_objects_total)",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 4,
+      "title": "CPU Usage %",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "rate(process_cpu_seconds_total[1m]) * 100",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "WebSocket Connections Over Time",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "streamxr_websocket_connections",
+          "refId": "A",
+          "legendFormat": "Connections"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "never"
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Asset Requests Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(streamxr_asset_requests_total[1m])",
+          "refId": "A",
+          "legendFormat": "{{asset}} ({{lod}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Asset Data Transfer Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(streamxr_asset_bytes_transferred_total[1m])",
+          "refId": "A",
+          "legendFormat": "{{asset}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Client Bandwidth",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "streamxr_client_bandwidth_bps",
+          "refId": "A",
+          "legendFormat": "{{client_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "CPU Usage",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(process_cpu_seconds_total[1m]) * 100",
+          "refId": "A",
+          "legendFormat": "CPU %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Memory Usage",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 6 },
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes",
+          "refId": "A",
+          "legendFormat": "Memory"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      }
+    }
+  ],
+  "time": { "from": "now-1h", "to": "now" }
 }

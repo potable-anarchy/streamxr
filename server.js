@@ -87,7 +87,8 @@ wss.on("connection", (ws) => {
 
   // Update metrics
   wsConnections.set(clients.size);
-  roomUsers.set({ room: roomInfo.roomId }, roomInfo.users.size);
+  const roomUsersList = roomManager.getRoomUsers(roomInfo.room);
+  roomUsers.set({ room: roomInfo.room }, roomUsersList.length + 1); // +1 for current user
 
   console.log(`Client ${clientId} connected. Total clients: ${clients.size}`);
 
@@ -147,9 +148,9 @@ wss.on("connection", (ws) => {
 
     // Update metrics
     wsConnections.set(clients.size);
-    if (room && room.roomId) {
-      const roomInfo = roomManager.getRoom(room.roomId);
-      roomUsers.set({ room: room.roomId }, roomInfo ? roomInfo.users.size : 0);
+    if (room) {
+      const roomUsersList = roomManager.getRoomUsers(room);
+      roomUsers.set({ room: room }, roomUsersList.length);
     }
     bandwidthGauge.remove({ client_id: clientId });
 
