@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebRTC + Three.js - Phase 1</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+    }
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+    }
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 10px;
+      border-radius: 5px;
+      font-size: 14px;
+      max-width: 300px;
+    }
+    #status {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.3);
+    }
+    .status-item {
+      margin: 5px 0;
+    }
+    .connected {
+      color: #4CAF50;
+    }
+    .disconnected {
+      color: #f44336;
+    }
+    .pending {
+      color: #FFC107;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <div id="info">
+    <div><strong>WebRTC + Three.js Phase 1</strong></div>
+    <div id="status">
+      <div class="status-item">WebSocket: <span id="ws-status" class="disconnected">Disconnected</span></div>
+      <div class="status-item">Client ID: <span id="client-id">-</span></div>
+      <div class="status-item">WebRTC Peers: <span id="peer-count">0</span></div>
+      <div class="status-item">Binary Data: <span id="binary-status">-</span></div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/simple-peer@9.11.1/simplepeer.min.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>
