@@ -52,10 +52,8 @@ function initThreeJS() {
 function animate() {
   requestAnimationFrame(animate);
 
-  if (cube) {
-    cube.rotation.x += 0.01;
-    cube.rotation.y += 0.01;
-  }
+  cube.rotation.x += 0.01;
+  cube.rotation.y += 0.01;
 
   renderer.render(scene, camera);
 }
@@ -136,24 +134,24 @@ function handleSignalingMessage(data) {
       peers.get(data.from).signal(data.signal);
       break;
 
-    case "asset_metadata":
+    case "asset-start":
       handleAssetStart(data);
       break;
 
-    case "asset_chunk":
+    case "asset-chunk":
       handleAssetChunkMetadata(data);
       break;
 
-    case "asset_complete":
+    case "asset-complete":
       handleAssetComplete(data);
       break;
 
-    case "asset_error":
+    case "asset-error":
       console.error("Asset error:", data.error);
-      updateStatus("binary-status", "Error", "disconnected");
+      updateStatus("asset-status", "Error", "disconnected");
       break;
 
-    case "asset_list":
+    case "asset-list":
       console.log("Available assets:", data.assets);
       break;
   }
@@ -181,6 +179,7 @@ function createPeerConnection(peerId, initiator) {
   peer.on("connect", () => {
     console.log(`WebRTC connected to peer ${peerId}`);
     updatePeerCount();
+
     sendBinaryData(peer);
   });
 
@@ -205,6 +204,7 @@ function createPeerConnection(peerId, initiator) {
 function sendBinaryData(peer) {
   const testData = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   console.log("Sending binary data:", testData);
+
   peer.send(testData);
 
   const array = new Float32Array([1.5, 2.5, 3.5, 4.5]);
@@ -232,43 +232,44 @@ function updatePeerCount() {
 
 function updateStatus(elementId, text, className) {
   const element = document.getElementById(elementId);
-  if (element) {
-    element.textContent = text;
-    element.className = className;
-  }
+  element.textContent = text;
+  element.className = className;
 }
 
 // Asset Streaming Functions
 
-function requestAsset(assetId, lod = "high") {
-  console.log("Requesting asset:", assetId, "LOD:", lod);
+function requestAsset(assetId) {
+  console.log("Requesting asset:", assetId);
   ws.send(
     JSON.stringify({
-      type: "request_asset",
+      type: "request-asset",
       assetId: assetId,
-      lod: lod,
     }),
   );
-  updateStatus("binary-status", "Requesting...", "pending");
+  updateStatus("asset-status", "Requesting...", "pending");
 }
 
 function handleAssetStart(data) {
   console.log(
-    `Starting asset download: ${data.assetId}, size: ${data.size} bytes, chunks: ${data.chunks}`,
+    `Starting asset download: ${data.assetId}, size: ${data.totalSize} bytes, chunks: ${data.totalChunks}`,
   );
 
   assetStreams.set(data.assetId, {
     assetId: data.assetId,
-    lod: data.lod,
-    totalSize: data.size,
-    totalChunks: data.chunks,
+    totalSize: data.totalSize,
+    totalChunks: data.totalChunks,
+    chunks: [],
     receivedChunks: 0,
-    buffer: new Uint8Array(data.size),
-    currentOffset: 0,
+    buffer: new Uint8Array(data.totalSize),
     expectingBinary: false,
+    nextChunkIndex: 0,
   });
 
-  updateStatus("binary-status", `Downloading (0/${data.chunks})`, "pending");
+  updateStatus(
+    "asset-status",
+    `Downloading (0/${data.totalChunks})`,
+    "pending",
+  );
 }
 
 function handleAssetChunkMetadata(data) {
@@ -283,7 +284,7 @@ function handleAssetChunkMetadata(data) {
   stream.expectingBinary = true;
 
   console.log(
-    `Received metadata for chunk ${data.chunkIndex}/${data.totalChunks} of ${data.assetId}`,
+    `Received metadata for chunk ${data.chunkIndex} of ${data.assetId}`,
   );
 }
 
@@ -305,15 +306,15 @@ function handleAssetChunkData(arrayBuffer) {
     return;
   }
 
+  const chunkMeta = targetStream.currentChunkMeta;
   const chunkData = new Uint8Array(arrayBuffer);
 
-  // Copy chunk data into the buffer at the current offset
-  targetStream.buffer.set(chunkData, targetStream.currentOffset);
-  targetStream.currentOffset += chunkData.length;
+  // Copy chunk data into the buffer at the correct offset
+  targetStream.buffer.set(chunkData, chunkMeta.offset);
   targetStream.receivedChunks++;
 
   console.log(
-    `Received binary chunk ${targetStream.receivedChunks}/${targetStream.totalChunks} of ${targetAssetId} (${chunkData.length} bytes)`,
+    `Received binary chunk ${chunkMeta.chunkIndex} of ${targetAssetId} (${chunkData.length} bytes)`,
   );
 
   // Reset binary expectation flag
@@ -322,7 +323,7 @@ function handleAssetChunkData(arrayBuffer) {
 
   // Update status
   updateStatus(
-    "binary-status",
+    "asset-status",
     `Downloading (${targetStream.receivedChunks}/${targetStream.totalChunks})`,
     "pending",
   );
@@ -335,9 +336,7 @@ function handleAssetComplete(data) {
     return;
   }
 
-  console.log(
-    `Asset download complete: ${data.assetId} (${stream.totalSize} bytes)`,
-  );
+  console.log(`Asset download complete: ${data.assetId}`);
 
   // Create blob from buffer
   const blob = new Blob([stream.buffer], { type: "model/gltf-binary" });
@@ -348,7 +347,7 @@ function handleAssetComplete(data) {
 
   // Clean up
   assetStreams.delete(data.assetId);
-  updateStatus("binary-status", "Loaded GLB", "connected");
+  updateStatus("asset-status", "Loaded", "connected");
 }
 
 function loadGLBModel(url, assetId) {
@@ -380,7 +379,7 @@ function loadGLBModel(url, assetId) {
     },
     (error) => {
       console.error("Error loading GLB model:", error);
-      updateStatus("binary-status", "Load Error", "disconnected");
+      updateStatus("asset-status", "Load Error", "disconnected");
       URL.revokeObjectURL(url);
     },
   );

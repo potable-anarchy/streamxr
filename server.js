@@ -1,133 +1,146 @@
-const express = require('express');
-const http = require('http');
-const WebSocket = require('ws');
-const path = require('path');
-const AssetManager = require('./lib/assetManager');
+const express = require("express");
+const http = require("http");
+const WebSocket = require("ws");
+const path = require("path");
+const AssetManager = require("./lib/assetManager");
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-app.use(express.static('public'));
+app.use(express.static("public"));
 
 const clients = new Map();
-const assetManager = new AssetManager(path.join(__dirname, 'public'));
+const assetManager = new AssetManager();
 
 // Asset streaming configuration
 const CHUNK_SIZE = 16 * 1024; // 16KB chunks
 
-wss.on('connection', (ws) => {
+wss.on("connection", (ws) => {
   const clientId = generateId();
   clients.set(clientId, ws);
 
   console.log(`Client ${clientId} connected. Total clients: ${clients.size}`);
 
-  ws.on('message', async (message) => {
+  ws.on("message", async (message) => {
     try {
       const data = JSON.parse(message);
 
-      if (data.type === 'signal') {
+      if (data.type === "signal") {
         broadcastToOthers(clientId, {
-          type: 'signal',
+          type: "signal",
           from: clientId,
-          signal: data.signal
+          signal: data.signal,
         });
-      } else if (data.type === 'request-asset') {
+      } else if (data.type === "request_asset") {
         // Handle asset request
-        await handleAssetRequest(clientId, ws, data.assetId);
-      } else if (data.type === 'list-assets') {
+        await handleAssetRequest(
+          clientId,
+          ws,
+          data.assetId,
+          data.lod || "high",
+        );
+      } else if (data.type === "list_assets") {
         // Send list of available assets
-        ws.send(JSON.stringify({
-          type: 'asset-list',
-          assets: assetManager.listAssets()
-        }));
+        ws.send(
+          JSON.stringify({
+            type: "asset_list",
+            assets: assetManager.listAssets(),
+          }),
+        );
       }
     } catch (error) {
-      console.error('Error parsing message:', error);
+      console.error("Error parsing message:", error);
     }
   });
 
-  ws.on('close', () => {
+  ws.on("close", () => {
     clients.delete(clientId);
-    console.log(`Client ${clientId} disconnected. Total clients: ${clients.size}`);
+    console.log(
+      `Client ${clientId} disconnected. Total clients: ${clients.size}`,
+    );
 
     broadcastToOthers(clientId, {
-      type: 'peer-disconnected',
-      peerId: clientId
+      type: "peer-disconnected",
+      peerId: clientId,
     });
   });
 
-  ws.send(JSON.stringify({
-    type: 'welcome',
-    id: clientId,
-    peers: Array.from(clients.keys()).filter(id => id !== clientId)
-  }));
+  ws.send(
+    JSON.stringify({
+      type: "welcome",
+      id: clientId,
+      peers: Array.from(clients.keys()).filter((id) => id !== clientId),
+    }),
+  );
 
   broadcastToOthers(clientId, {
-    type: 'peer-connected',
-    peerId: clientId
+    type: "peer-connected",
+    peerId: clientId,
   });
 });
 
-async function handleAssetRequest(clientId, ws, assetId) {
+async function handleAssetRequest(clientId, ws, assetId, lod = "high") {
   try {
-    console.log(`Client ${clientId} requested asset: ${assetId}`);
+    console.log(`Client ${clientId} requested asset: ${assetId} (LOD: ${lod})`);
 
-    const assetData = await assetManager.loadAssetData(assetId);
+    const assetBuffer = assetManager.getAsset(assetId, lod);
 
     // Send asset metadata first
-    ws.send(JSON.stringify({
-      type: 'asset-start',
-      assetId: assetData.id,
-      totalSize: assetData.size,
-      totalChunks: Math.ceil(assetData.size / CHUNK_SIZE)
-    }));
+    ws.send(
+      JSON.stringify({
+        type: "asset_metadata",
+        assetId: assetId,
+        lod: lod,
+        size: assetBuffer.length,
+        chunks: Math.ceil(assetBuffer.length / CHUNK_SIZE),
+      }),
+    );
 
     // Stream asset data in chunks
     let offset = 0;
     let chunkIndex = 0;
 
-    while (offset < assetData.size) {
-      const chunkSize = Math.min(CHUNK_SIZE, assetData.size - offset);
-      const chunk = assetData.data.slice(offset, offset + chunkSize);
+    while (offset < assetBuffer.length) {
+      const chunkSize = Math.min(CHUNK_SIZE, assetBuffer.length - offset);
+      const chunk = assetBuffer.slice(offset, offset + chunkSize);
 
-      // Send chunk metadata as JSON, followed by binary data
-      const chunkInfo = {
-        type: 'asset-chunk',
-        assetId: assetData.id,
-        chunkIndex: chunkIndex,
-        chunkSize: chunkSize,
-        offset: offset
-      };
+      // Send chunk header as JSON
+      ws.send(
+        JSON.stringify({
+          type: "asset_chunk",
+          assetId: assetId,
+          chunkIndex: chunkIndex,
+          totalChunks: Math.ceil(assetBuffer.length / CHUNK_SIZE),
+        }),
+      );
 
-      // Send metadata
-      ws.send(JSON.stringify(chunkInfo));
-
-      // Send binary chunk
+      // Send binary chunk immediately after
       ws.send(chunk);
 
       offset += chunkSize;
       chunkIndex++;
-
-      console.log(`Sent chunk ${chunkIndex} of ${assetId} (${chunkSize} bytes)`);
     }
 
     // Send completion message
-    ws.send(JSON.stringify({
-      type: 'asset-complete',
-      assetId: assetData.id
-    }));
+    ws.send(
+      JSON.stringify({
+        type: "asset_complete",
+        assetId: assetId,
+      }),
+    );
 
     console.log(`Completed streaming asset ${assetId} to client ${clientId}`);
-
   } catch (error) {
     console.error(`Error streaming asset ${assetId}:`, error);
 
-    ws.send(JSON.stringify({
-      type: 'asset-error',
-      assetId: assetId,
-      error: error.message
-    }));
+    ws.send(
+      JSON.stringify({
+        type: "asset_error",
+        assetId: assetId,
+        error: error.message,
+      }),
+    );
   }
 }
 
