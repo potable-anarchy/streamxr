@@ -6,6 +6,7 @@ const AssetManager = require("./lib/assetManager");
 const AdaptiveStreamingManager = require("./lib/adaptiveStreaming");
 const FoveatedStreamingManager = require("./lib/foveatedStreaming");
 const RoomManager = require("./lib/roomManager");
+const ObjectSync = require("./lib/objectSync");
 
 const app = express();
 const server = http.createServer(app);
@@ -18,6 +19,7 @@ const assetManager = new AssetManager();
 const adaptiveStreaming = new AdaptiveStreamingManager();
 const foveatedStreaming = new FoveatedStreamingManager();
 const roomManager = new RoomManager();
+const objectSync = new ObjectSync();
 
 // Asset streaming configuration
 const CHUNK_SIZE = 16 * 1024; // 16KB chunks
@@ -60,6 +62,18 @@ wss.on("connection", (ws) => {
       } else if (data.type === "position-update") {
         // Handle position updates for multiuser
         handlePositionUpdate(clientId, data);
+      } else if (data.type === "get-room-objects") {
+        // Get all objects in the room
+        handleGetRoomObjects(ws, data.roomId);
+      } else if (data.type === "create-object") {
+        // Create a new shared object
+        handleCreateObject(data.roomId, data.objectData);
+      } else if (data.type === "update-object") {
+        // Update an existing object
+        handleUpdateObject(data.roomId, data.objectId, data.updates);
+      } else if (data.type === "delete-object") {
+        // Delete an object
+        handleDeleteObject(data.roomId, data.objectId);
       }
     } catch (error) {
       console.error("Error parsing message:", error);
@@ -304,6 +318,80 @@ function broadcastToRoom(excludeId, message) {
 
 function generateId() {
   return Math.random().toString(36).substring(2, 15);
+}
+
+// Object Synchronization Handlers
+
+function handleGetRoomObjects(ws, roomId) {
+  const objects = objectSync.getRoomObjects(roomId);
+
+  ws.send(
+    JSON.stringify({
+      type: "room-objects",
+      objects: objects,
+    }),
+  );
+
+  console.log(`Sent ${objects.length} objects in room ${roomId} to client`);
+}
+
+function handleCreateObject(roomId, objectData) {
+  try {
+    const createdObject = objectSync.createObject(roomId, objectData);
+
+    // Broadcast to all clients
+    broadcastToAll({
+      type: "object-created",
+      object: createdObject,
+    });
+
+    console.log(`Object ${createdObject.id} created in room ${roomId}`);
+  } catch (error) {
+    console.error("Error creating object:", error);
+  }
+}
+
+function handleUpdateObject(roomId, objectId, updates) {
+  try {
+    const updatedObject = objectSync.updateObject(roomId, objectId, updates);
+
+    // Broadcast to all clients
+    broadcastToAll({
+      type: "object-updated",
+      object: updatedObject,
+    });
+
+    console.log(`Object ${objectId} updated in room ${roomId}`);
+  } catch (error) {
+    console.error("Error updating object:", error);
+  }
+}
+
+function handleDeleteObject(roomId, objectId) {
+  try {
+    const deleted = objectSync.deleteObject(roomId, objectId);
+
+    if (deleted) {
+      // Broadcast to all clients
+      broadcastToAll({
+        type: "object-deleted",
+        objectId: objectId,
+      });
+
+      console.log(`Object ${objectId} deleted from room ${roomId}`);
+    }
+  } catch (error) {
+    console.error("Error deleting object:", error);
+  }
+}
+
+function broadcastToAll(message) {
+  const messageStr = JSON.stringify(message);
+  clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(messageStr);
+    }
+  });
 }
 
 const PORT = process.env.PORT || 3000;

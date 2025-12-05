@@ -9,6 +9,10 @@ let gltfLoader;
 let avatars = new Map(); // Store avatar meshes for other users
 let userPositions = new Map(); // Store positions of other users
 
+// Shared objects state
+let sharedObjects = new Map(); // objectId -> THREE.Mesh
+let roomId = "default"; // Default room
+
 // Asset streaming state
 let assetStreams = new Map(); // Track incoming asset streams
 let expectingBinaryChunk = false; // Global flag for next binary message
@@ -160,6 +164,9 @@ function handleSignalingMessage(data) {
 
       // Request an asset after connection (adaptive streaming will select LOD)
       setTimeout(() => requestAsset("cube"), 1000);
+
+      // Request existing objects in the room
+      requestRoomObjects();
       break;
 
     case "peer-connected":
@@ -215,6 +222,22 @@ function handleSignalingMessage(data) {
 
     case "lod-recommendation":
       handleLODRecommendation(data.lod);
+      break;
+
+    case "room-objects":
+      handleRoomObjects(data.objects);
+      break;
+
+    case "object-created":
+      handleObjectCreated(data.object);
+      break;
+
+    case "object-updated":
+      handleObjectUpdated(data.object);
+      break;
+
+    case "object-deleted":
+      handleObjectDeleted(data.objectId);
       break;
 
     default:
@@ -845,8 +868,288 @@ function enableCameraControls() {
   console.log("Camera controls enabled (WASD + mouse drag)");
 }
 
+// Object Synchronization Functions
+
+/**
+ * Request all existing objects in the room
+ */
+function requestRoomObjects() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  ws.send(
+    JSON.stringify({
+      type: "get-room-objects",
+      roomId: roomId,
+    }),
+  );
+}
+
+/**
+ * Handle receiving all objects in the room
+ */
+function handleRoomObjects(objects) {
+  console.log(`Received ${objects.length} objects in room ${roomId}`);
+
+  objects.forEach((objectData) => {
+    createLocalObject(objectData);
+  });
+}
+
+/**
+ * Spawn a new object in the scene and sync to server
+ */
+function spawnObject(type = "cube", position = null) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.warn("Cannot spawn object: WebSocket not connected");
+    return;
+  }
+
+  // Use random position if not specified
+  if (!position) {
+    position = [
+      (Math.random() - 0.5) * 10, // x: -5 to 5
+      Math.random() * 3 + 0.5, // y: 0.5 to 3.5
+      (Math.random() - 0.5) * 10 - 2, // z: -7 to 3
+    ];
+  }
+
+  const objectData = {
+    type: type,
+    position: position,
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+    color: Math.random() * 0xffffff,
+    createdBy: clientId,
+  };
+
+  ws.send(
+    JSON.stringify({
+      type: "create-object",
+      roomId: roomId,
+      objectData: objectData,
+    }),
+  );
+}
+
+/**
+ * Handle object creation event from server
+ */
+function handleObjectCreated(objectData) {
+  console.log("Object created:", objectData);
+  createLocalObject(objectData);
+}
+
+/**
+ * Create local THREE.js object from server data
+ */
+function createLocalObject(objectData) {
+  // Don't create if already exists
+  if (sharedObjects.has(objectData.id)) {
+    console.log("Object already exists:", objectData.id);
+    return;
+  }
+
+  let geometry;
+  switch (objectData.type) {
+    case "sphere":
+      geometry = new THREE.SphereGeometry(0.5, 32, 32);
+      break;
+    case "cone":
+      geometry = new THREE.ConeGeometry(0.5, 1, 32);
+      break;
+    case "cube":
+    default:
+      geometry = new THREE.BoxGeometry(1, 1, 1);
+  }
+
+  const material = new THREE.MeshStandardMaterial({
+    color: objectData.color,
+    roughness: 0.5,
+    metalness: 0.3,
+  });
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(...objectData.position);
+  mesh.rotation.set(...objectData.rotation);
+  mesh.scale.set(...objectData.scale);
+
+  // Store object ID for reference
+  mesh.userData.objectId = objectData.id;
+  mesh.userData.type = objectData.type;
+
+  scene.add(mesh);
+  sharedObjects.set(objectData.id, mesh);
+
+  console.log(`Created local object ${objectData.id} at`, objectData.position);
+}
+
+/**
+ * Update object position (called during drag or manipulation)
+ */
+function updateObjectPosition(objectId, position, rotation = null, scale = null) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const updateData = { position };
+  if (rotation) updateData.rotation = rotation;
+  if (scale) updateData.scale = scale;
+
+  ws.send(
+    JSON.stringify({
+      type: "update-object",
+      roomId: roomId,
+      objectId: objectId,
+      updates: updateData,
+    }),
+  );
+}
+
+/**
+ * Handle object update event from server
+ */
+function handleObjectUpdated(objectData) {
+  const mesh = sharedObjects.get(objectData.id);
+  if (!mesh) {
+    console.warn("Updated object not found locally:", objectData.id);
+    return;
+  }
+
+  // Update mesh position/rotation/scale
+  mesh.position.set(...objectData.position);
+  mesh.rotation.set(...objectData.rotation);
+  mesh.scale.set(...objectData.scale);
+
+  if (objectData.color !== undefined) {
+    mesh.material.color.setHex(objectData.color);
+  }
+}
+
+/**
+ * Delete an object
+ */
+function deleteObject(objectId) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  ws.send(
+    JSON.stringify({
+      type: "delete-object",
+      roomId: roomId,
+      objectId: objectId,
+    }),
+  );
+}
+
+/**
+ * Handle object deletion event from server
+ */
+function handleObjectDeleted(objectId) {
+  const mesh = sharedObjects.get(objectId);
+  if (!mesh) {
+    console.warn("Deleted object not found locally:", objectId);
+    return;
+  }
+
+  scene.remove(mesh);
+  mesh.geometry.dispose();
+  mesh.material.dispose();
+  sharedObjects.delete(objectId);
+
+  console.log("Deleted object:", objectId);
+}
+
+// XR Controller Input
+
+/**
+ * Setup XR controllers for object spawning
+ */
+function setupXRControllers() {
+  if (!renderer.xr || !renderer.xr.enabled) {
+    console.log("XR not enabled, skipping controller setup");
+    return;
+  }
+
+  // Controller 1
+  const controller1 = renderer.xr.getController(0);
+  controller1.addEventListener("selectstart", onSelectStart);
+  controller1.addEventListener("selectend", onSelectEnd);
+  scene.add(controller1);
+
+  // Controller 2
+  const controller2 = renderer.xr.getController(1);
+  controller2.addEventListener("selectstart", onSelectStart);
+  controller2.addEventListener("selectend", onSelectEnd);
+  scene.add(controller2);
+
+  console.log("XR controllers setup complete");
+}
+
+function onSelectStart(event) {
+  const controller = event.target;
+
+  // Get controller position
+  const position = new THREE.Vector3();
+  controller.getWorldPosition(position);
+
+  // Spawn object at controller position
+  spawnObject("cube", [position.x, position.y, position.z]);
+}
+
+function onSelectEnd(event) {
+  // Could be used for drag-and-drop completion
+}
+
+// UI Setup
+
+function setupObjectSpawningUI() {
+  // Create UI container
+  const uiContainer = document.createElement("div");
+  uiContainer.style.position = "absolute";
+  uiContainer.style.top = "20px";
+  uiContainer.style.right = "20px";
+  uiContainer.style.zIndex = "999";
+  uiContainer.style.display = "flex";
+  uiContainer.style.flexDirection = "column";
+  uiContainer.style.gap = "10px";
+
+  // Spawn cube button
+  const spawnCubeBtn = document.createElement("button");
+  spawnCubeBtn.textContent = "Spawn Cube";
+  spawnCubeBtn.onclick = () => spawnObject("cube");
+  uiContainer.appendChild(spawnCubeBtn);
+
+  // Spawn sphere button
+  const spawnSphereBtn = document.createElement("button");
+  spawnSphereBtn.textContent = "Spawn Sphere";
+  spawnSphereBtn.onclick = () => spawnObject("sphere");
+  uiContainer.appendChild(spawnSphereBtn);
+
+  // Spawn cone button
+  const spawnConeBtn = document.createElement("button");
+  spawnConeBtn.textContent = "Spawn Cone";
+  spawnConeBtn.onclick = () => spawnObject("cone");
+  uiContainer.appendChild(spawnConeBtn);
+
+  // Object count display
+  const objectCount = document.createElement("div");
+  objectCount.id = "object-count";
+  objectCount.textContent = "Objects: 0";
+  objectCount.style.color = "white";
+  objectCount.style.padding = "5px";
+  objectCount.style.backgroundColor = "rgba(0,0,0,0.5)";
+  objectCount.style.borderRadius = "4px";
+  uiContainer.appendChild(objectCount);
+
+  document.body.appendChild(uiContainer);
+
+  // Update object count periodically
+  setInterval(() => {
+    const count = sharedObjects.size;
+    document.getElementById("object-count").textContent = `Objects: ${count}`;
+  }, 1000);
+}
+
 initThreeJS();
 initWebSocket();
 initWebXR();
 enableCameraControls();
 enableHeadTracking();
+setupObjectSpawningUI();
