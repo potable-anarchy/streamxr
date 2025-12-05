@@ -13,6 +13,8 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 app.use(express.static("public"));
+app.use(express.json());
+app.use(express.raw({ type: 'model/gltf-binary', limit: '50mb' }));
 
 const clients = new Map();
 const assetManager = new AssetManager();
@@ -385,6 +387,104 @@ function handleDeleteObject(roomId, objectId) {
   }
 }
 
+// REST API endpoints for asset upload
+
+/**
+ * POST /api/assets/upload
+ * Upload a high-quality GLB asset and auto-generate LOD levels
+ * Body: raw binary GLB data
+ * Query: ?assetId=<unique-id>
+ */
+app.post("/api/assets/upload", async (req, res) => {
+  try {
+    const assetId = req.query.assetId;
+
+    if (!assetId) {
+      return res.status(400).json({ error: "Missing assetId query parameter" });
+    }
+
+    if (!req.body || req.body.length === 0) {
+      return res.status(400).json({ error: "Missing GLB file data" });
+    }
+
+    console.log(`\n=== Asset Upload Request ===`);
+    console.log(`Asset ID: ${assetId}`);
+    console.log(`File size: ${req.body.length} bytes`);
+
+    // Upload asset and generate LODs
+    const result = await assetManager.uploadAsset(assetId, req.body);
+
+    console.log(`=== Upload Complete ===\n`);
+
+    res.json({
+      success: true,
+      ...result,
+    });
+
+    // Notify all connected clients about new asset
+    broadcastToAll({
+      type: "asset_uploaded",
+      assetId: result.assetId,
+      lodLevels: result.lodLevels,
+    });
+  } catch (error) {
+    console.error("Asset upload error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/assets
+ * List all available assets
+ */
+app.get("/api/assets", (req, res) => {
+  const assets = assetManager.listAssets();
+  res.json({ assets });
+});
+
+/**
+ * GET /api/assets/:assetId
+ * Get information about a specific asset
+ */
+app.get("/api/assets/:assetId", (req, res) => {
+  const assetInfo = assetManager.getAssetInfo(req.params.assetId);
+
+  if (!assetInfo) {
+    return res.status(404).json({ error: "Asset not found" });
+  }
+
+  res.json(assetInfo);
+});
+
+/**
+ * DELETE /api/assets/:assetId
+ * Remove an asset and its cached LODs
+ */
+app.delete("/api/assets/:assetId", async (req, res) => {
+  try {
+    await assetManager.removeAsset(req.params.assetId);
+
+    res.json({
+      success: true,
+      message: `Asset ${req.params.assetId} removed`
+    });
+
+    // Notify all connected clients
+    broadcastToAll({
+      type: "asset_removed",
+      assetId: req.params.assetId,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 function broadcastToAll(message) {
   const messageStr = JSON.stringify(message);
   clients.forEach((client) => {
@@ -395,6 +495,19 @@ function broadcastToAll(message) {
 }
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+
+// Initialize asset manager and start server
+(async () => {
+  try {
+    await assetManager.init();
+    console.log("Asset manager initialized");
+
+    server.listen(PORT, () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+      console.log(`Upload assets via: POST http://localhost:${PORT}/api/assets/upload?assetId=<id>`);
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  }
+})();

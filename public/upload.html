@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Asset Upload - Phase 7 Dynamic LOD</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .container {
+      max-width: 800px;
+      width: 100%;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      padding: 40px;
+      margin-top: 40px;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+      font-size: 32px;
+    }
+
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+
+    .upload-section {
+      border: 2px dashed #667eea;
+      border-radius: 8px;
+      padding: 40px;
+      text-align: center;
+      background: #f8f9ff;
+      margin-bottom: 30px;
+      transition: all 0.3s ease;
+    }
+
+    .upload-section:hover {
+      border-color: #764ba2;
+      background: #f0f1ff;
+    }
+
+    .upload-section.dragging {
+      border-color: #764ba2;
+      background: #e8e9ff;
+      transform: scale(1.02);
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 6px;
+      font-size: 14px;
+      margin-bottom: 15px;
+      transition: border-color 0.3s;
+    }
+
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .file-label {
+      display: inline-block;
+      padding: 12px 24px;
+      background: #667eea;
+      color: white;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.3s;
+      font-weight: 500;
+    }
+
+    .file-label:hover {
+      background: #5568d3;
+    }
+
+    .selected-file {
+      margin-top: 15px;
+      color: #666;
+      font-size: 14px;
+    }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+      margin-top: 15px;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .status {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 6px;
+      display: none;
+    }
+
+    .status.success {
+      background: #d4edda;
+      border: 1px solid #c3e6cb;
+      color: #155724;
+      display: block;
+    }
+
+    .status.error {
+      background: #f8d7da;
+      border: 1px solid #f5c6cb;
+      color: #721c24;
+      display: block;
+    }
+
+    .status.loading {
+      background: #d1ecf1;
+      border: 1px solid #bee5eb;
+      color: #0c5460;
+      display: block;
+    }
+
+    .assets-section {
+      margin-top: 40px;
+    }
+
+    .assets-section h2 {
+      color: #333;
+      margin-bottom: 20px;
+      font-size: 24px;
+    }
+
+    .asset-list {
+      list-style: none;
+    }
+
+    .asset-item {
+      background: #f8f9ff;
+      padding: 15px;
+      margin-bottom: 10px;
+      border-radius: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.3s;
+    }
+
+    .asset-item:hover {
+      background: #e8e9ff;
+    }
+
+    .asset-info {
+      flex: 1;
+    }
+
+    .asset-name {
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 5px;
+    }
+
+    .asset-lods {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .asset-sizes {
+      font-size: 11px;
+      color: #999;
+      margin-top: 3px;
+    }
+
+    .delete-btn {
+      padding: 8px 16px;
+      background: #dc3545;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.3s;
+    }
+
+    .delete-btn:hover {
+      background: #c82333;
+    }
+
+    .lod-info {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 15px;
+      margin-top: 15px;
+    }
+
+    .lod-card {
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      text-align: center;
+      border: 2px solid #e0e0e0;
+    }
+
+    .lod-card h4 {
+      color: #667eea;
+      margin-bottom: 8px;
+      font-size: 14px;
+      text-transform: uppercase;
+    }
+
+    .lod-card .size {
+      font-size: 18px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .lod-card .percent {
+      font-size: 12px;
+      color: #999;
+      margin-top: 5px;
+    }
+
+    @media (max-width: 600px) {
+      .container {
+        padding: 20px;
+      }
+
+      .lod-info {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Asset Upload Manager</h1>
+    <p class="subtitle">Phase 7: Dynamic LOD Generation</p>
+
+    <div class="upload-section" id="uploadSection">
+      <input type="text" id="assetId" placeholder="Asset ID (e.g., my-spaceship)" required>
+
+      <label for="fileInput" class="file-label">
+        Choose GLB File
+      </label>
+      <input type="file" id="fileInput" accept=".glb" required>
+
+      <div class="selected-file" id="selectedFile">No file selected</div>
+
+      <button id="uploadBtn" disabled>Upload & Generate LODs</button>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div class="assets-section">
+      <h2>Available Assets</h2>
+      <ul class="asset-list" id="assetList">
+        <li style="color: #999; text-align: center; padding: 20px;">Loading...</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    const assetIdInput = document.getElementById('assetId');
+    const fileInput = document.getElementById('fileInput');
+    const selectedFileDiv = document.getElementById('selectedFile');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const statusDiv = document.getElementById('status');
+    const assetList = document.getElementById('assetList');
+    const uploadSection = document.getElementById('uploadSection');
+
+    let selectedFile = null;
+
+    // File input change handler
+    fileInput.addEventListener('change', (e) => {
+      selectedFile = e.target.files[0];
+      if (selectedFile) {
+        selectedFileDiv.textContent = `Selected: ${selectedFile.name} (${formatBytes(selectedFile.size)})`;
+        checkUploadReady();
+      }
+    });
+
+    // Asset ID input handler
+    assetIdInput.addEventListener('input', checkUploadReady);
+
+    // Check if upload is ready
+    function checkUploadReady() {
+      uploadBtn.disabled = !(selectedFile && assetIdInput.value.trim());
+    }
+
+    // Drag and drop handlers
+    uploadSection.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadSection.classList.add('dragging');
+    });
+
+    uploadSection.addEventListener('dragleave', () => {
+      uploadSection.classList.remove('dragging');
+    });
+
+    uploadSection.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadSection.classList.remove('dragging');
+
+      const files = e.dataTransfer.files;
+      if (files.length > 0 && files[0].name.endsWith('.glb')) {
+        selectedFile = files[0];
+        fileInput.files = files;
+        selectedFileDiv.textContent = `Selected: ${selectedFile.name} (${formatBytes(selectedFile.size)})`;
+        checkUploadReady();
+      }
+    });
+
+    // Upload handler
+    uploadBtn.addEventListener('click', async () => {
+      if (!selectedFile || !assetIdInput.value.trim()) return;
+
+      const assetId = assetIdInput.value.trim();
+
+      showStatus('loading', `Uploading ${selectedFile.name} and generating LODs...`);
+      uploadBtn.disabled = true;
+
+      try {
+        const formData = await selectedFile.arrayBuffer();
+
+        const response = await fetch(`/api/assets/upload?assetId=${encodeURIComponent(assetId)}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'model/gltf-binary'
+          },
+          body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          showStatus('success',
+            `✓ Upload successful! Generated ${result.lodLevels.length} LOD levels: ${result.lodLevels.join(', ')}`
+          );
+
+          // Show LOD sizes
+          const lodInfo = document.createElement('div');
+          lodInfo.className = 'lod-info';
+
+          for (const [level, size] of Object.entries(result.sizes)) {
+            const percent = ((size / result.sizes.high) * 100).toFixed(1);
+            lodInfo.innerHTML += `
+              <div class="lod-card">
+                <h4>${level}</h4>
+                <div class="size">${formatBytes(size)}</div>
+                <div class="percent">${percent}% of high</div>
+              </div>
+            `;
+          }
+
+          statusDiv.appendChild(lodInfo);
+
+          // Reset form
+          assetIdInput.value = '';
+          fileInput.value = '';
+          selectedFile = null;
+          selectedFileDiv.textContent = 'No file selected';
+
+          // Refresh asset list
+          loadAssets();
+        } else {
+          showStatus('error', `Upload failed: ${result.error}`);
+        }
+      } catch (error) {
+        showStatus('error', `Upload failed: ${error.message}`);
+      } finally {
+        uploadBtn.disabled = false;
+        checkUploadReady();
+      }
+    });
+
+    // Load assets
+    async function loadAssets() {
+      try {
+        const response = await fetch('/api/assets');
+        const data = await response.json();
+
+        if (data.assets.length === 0) {
+          assetList.innerHTML = '<li style="color: #999; text-align: center; padding: 20px;">No assets uploaded yet</li>';
+          return;
+        }
+
+        assetList.innerHTML = '';
+
+        // Get detailed info for each asset
+        for (const asset of data.assets) {
+          const detailResponse = await fetch(`/api/assets/${asset.id}`);
+          const detail = await detailResponse.json();
+
+          const li = document.createElement('li');
+          li.className = 'asset-item';
+
+          const lodsText = detail.lods.join(', ');
+          const sizesText = Object.entries(detail.sizes)
+            .map(([lod, size]) => `${lod}: ${formatBytes(size)}`)
+            .join(', ');
+
+          li.innerHTML = `
+            <div class="asset-info">
+              <div class="asset-name">${asset.id}</div>
+              <div class="asset-lods">LODs: ${lodsText}</div>
+              <div class="asset-sizes">${sizesText}</div>
+            </div>
+            <button class="delete-btn" onclick="deleteAsset('${asset.id}')">Delete</button>
+          `;
+
+          assetList.appendChild(li);
+        }
+      } catch (error) {
+        assetList.innerHTML = '<li style="color: #dc3545; text-align: center; padding: 20px;">Failed to load assets</li>';
+      }
+    }
+
+    // Delete asset
+    async function deleteAsset(assetId) {
+      if (!confirm(`Delete asset "${assetId}" and all its LODs?`)) return;
+
+      try {
+        const response = await fetch(`/api/assets/${assetId}`, {
+          method: 'DELETE'
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          showStatus('success', `Asset "${assetId}" deleted successfully`);
+          loadAssets();
+        } else {
+          showStatus('error', `Failed to delete: ${result.error}`);
+        }
+      } catch (error) {
+        showStatus('error', `Failed to delete: ${error.message}`);
+      }
+    }
+
+    // Show status message
+    function showStatus(type, message) {
+      statusDiv.className = `status ${type}`;
+      statusDiv.innerHTML = message;
+
+      if (type === 'success' || type === 'error') {
+        setTimeout(() => {
+          statusDiv.className = 'status';
+        }, 5000);
+      }
+    }
+
+    // Format bytes
+    function formatBytes(bytes) {
+      if (bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    // Load assets on page load
+    loadAssets();
+
+    // Listen for WebSocket updates
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'asset_uploaded' || data.type === 'asset_removed') {
+          loadAssets();
+        }
+      } catch (error) {
+        // Ignore non-JSON messages
+      }
+    };
+  </script>
+</body>
+</html>
