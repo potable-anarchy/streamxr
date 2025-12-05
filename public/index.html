@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebRTC + Three.js - Phase 2: Asset Streaming</title>
+  <title>WebRTC + Three.js - Phase 3: Adaptive Streaming</title>
   <style>
     body {
       margin: 0;
@@ -48,14 +48,15 @@
   <div id="canvas-container"></div>
 
   <div id="info">
-    <div><strong>WebRTC + Three.js Phase 2</strong></div>
-    <div><em>Asset Streaming</em></div>
+    <div><strong>WebRTC + Three.js Phase 3</strong></div>
+    <div><em>Adaptive Streaming</em></div>
     <div id="status">
       <div class="status-item">WebSocket: <span id="ws-status" class="disconnected">Disconnected</span></div>
       <div class="status-item">Client ID: <span id="client-id">-</span></div>
       <div class="status-item">WebRTC Peers: <span id="peer-count">0</span></div>
       <div class="status-item">Asset Status: <span id="asset-status">-</span></div>
       <div class="status-item">Binary Data: <span id="binary-status">-</span></div>
+      <div class="status-item">Current LOD: <span id="lod-indicator" class="pending">LOW</span></div>
     </div>
   </div>
 

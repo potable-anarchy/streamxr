@@ -3,6 +3,7 @@ const http = require("http");
 const WebSocket = require("ws");
 const path = require("path");
 const AssetManager = require("./lib/assetManager");
+const AdaptiveStreamingManager = require("./lib/adaptiveStreaming");
 
 const app = express();
 const server = http.createServer(app);
@@ -12,6 +13,7 @@ app.use(express.static("public"));
 
 const clients = new Map();
 const assetManager = new AssetManager();
+const adaptiveStreaming = new AdaptiveStreamingManager();
 
 // Asset streaming configuration
 const CHUNK_SIZE = 16 * 1024; // 16KB chunks
@@ -33,13 +35,8 @@ wss.on("connection", (ws) => {
           signal: data.signal,
         });
       } else if (data.type === "request_asset") {
-        // Handle asset request
-        await handleAssetRequest(
-          clientId,
-          ws,
-          data.assetId,
-          data.lod || "high",
-        );
+        // Handle asset request with adaptive streaming
+        await handleAssetRequest(clientId, ws, data.assetId, data.lod);
       } else if (data.type === "list_assets") {
         // Send list of available assets
         ws.send(
@@ -48,6 +45,9 @@ wss.on("connection", (ws) => {
             assets: assetManager.listAssets(),
           }),
         );
+      } else if (data.type === "bandwidth-metrics") {
+        // Update client bandwidth metrics
+        handleBandwidthMetrics(clientId, data.metrics);
       }
     } catch (error) {
       console.error("Error parsing message:", error);
@@ -56,6 +56,7 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => {
     clients.delete(clientId);
+    adaptiveStreaming.removeClient(clientId);
     console.log(
       `Client ${clientId} disconnected. Total clients: ${clients.size}`,
     );
@@ -80,9 +81,24 @@ wss.on("connection", (ws) => {
   });
 });
 
-async function handleAssetRequest(clientId, ws, assetId, lod = "high") {
+async function handleAssetRequest(clientId, ws, assetId, requestedLod) {
   try {
-    console.log(`Client ${clientId} requested asset: ${assetId} (LOD: ${lod})`);
+    const startTime = Date.now();
+
+    // Determine LOD - use adaptive selection if not specified
+    let lod = requestedLod || "high";
+
+    // Apply adaptive streaming if no specific LOD requested
+    if (!requestedLod) {
+      const selectedAsset = adaptiveStreaming.selectLOD(clientId, assetId);
+      // Extract LOD from selected asset (e.g., "sphere-high" -> "high")
+      lod = selectedAsset.endsWith("-high") ? "high" : "low";
+      console.log(
+        `Client ${clientId} requested ${assetId}, adaptive streaming selected ${lod} LOD`,
+      );
+    } else {
+      console.log(`Client ${clientId} requested asset: ${assetId} (LOD: ${lod})`);
+    }
 
     const assetBuffer = assetManager.getAsset(assetId, lod);
 
@@ -130,7 +146,13 @@ async function handleAssetRequest(clientId, ws, assetId, lod = "high") {
       }),
     );
 
-    console.log(`Completed streaming asset ${assetId} to client ${clientId}`);
+    // Update bandwidth metrics based on transfer
+    const transferDuration = Date.now() - startTime;
+    adaptiveStreaming.updateMetrics(clientId, assetBuffer.length, transferDuration);
+
+    console.log(
+      `Completed streaming asset ${assetId} (${lod}) to client ${clientId} in ${transferDuration}ms`,
+    );
   } catch (error) {
     console.error(`Error streaming asset ${assetId}:`, error);
 
@@ -139,6 +161,27 @@ async function handleAssetRequest(clientId, ws, assetId, lod = "high") {
         type: "asset_error",
         assetId: assetId,
         error: error.message,
+      }),
+    );
+  }
+}
+
+function handleBandwidthMetrics(clientId, metrics) {
+  console.log(`Received bandwidth metrics from client ${clientId}:`, metrics);
+
+  // Get recommended LOD based on client-reported metrics
+  const recommendedLOD = adaptiveStreaming.getRecommendedLOD(
+    clientId,
+    metrics,
+  );
+
+  // Send recommendation back to client
+  const ws = clients.get(clientId);
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(
+      JSON.stringify({
+        type: "lod-recommendation",
+        lod: recommendedLOD,
       }),
     );
   }

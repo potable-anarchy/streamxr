@@ -8,6 +8,16 @@ let gltfLoader;
 let assetStreams = new Map(); // Track incoming asset streams
 let expectingBinaryChunk = false; // Global flag for next binary message
 
+// Bandwidth monitoring
+let bandwidthMonitor = {
+  downloadStart: 0,
+  bytesReceived: 0,
+  currentBandwidth: 0,
+  lastReportTime: 0,
+  reportInterval: 2000, // Report every 2 seconds
+  recommendedLOD: "low",
+};
+
 function initThreeJS() {
   const container = document.getElementById("canvas-container");
 
@@ -121,8 +131,8 @@ function handleSignalingMessage(data) {
         createPeerConnection(peerId, true);
       });
 
-      // Request an asset after connection
-      setTimeout(() => requestAsset("cube", "high"), 1000);
+      // Request an asset after connection (adaptive streaming will select LOD)
+      setTimeout(() => requestAsset("cube"), 1000);
       break;
 
     case "peer-connected":
@@ -164,6 +174,10 @@ function handleSignalingMessage(data) {
 
     case "asset_list":
       console.log("Available assets:", data.assets);
+      break;
+
+    case "lod-recommendation":
+      handleLODRecommendation(data.lod);
       break;
 
     default:
@@ -252,13 +266,13 @@ function updateStatus(elementId, text, className) {
 
 // Asset Streaming Functions
 
-function requestAsset(assetId, lod = "high") {
-  console.log("Requesting asset:", assetId, "LOD:", lod);
+function requestAsset(assetId, lod = null) {
+  console.log("Requesting asset:", assetId, lod ? `LOD: ${lod}` : "(adaptive)");
   ws.send(
     JSON.stringify({
       type: "request_asset",
       assetId: assetId,
-      lod: lod,
+      lod: lod, // null means use adaptive streaming
     }),
   );
   updateStatus("binary-status", "Requesting...", "pending");
@@ -266,7 +280,7 @@ function requestAsset(assetId, lod = "high") {
 
 function handleAssetStart(data) {
   console.log(
-    `Starting asset download: ${data.assetId}, size: ${data.size} bytes, chunks: ${data.chunks}`,
+    `Starting asset download: ${data.assetId}, LOD: ${data.lod}, size: ${data.size} bytes, chunks: ${data.chunks}`,
   );
 
   assetStreams.set(data.assetId, {
@@ -278,6 +292,10 @@ function handleAssetStart(data) {
     chunks: [],
     currentOffset: 0,
   });
+
+  // Start bandwidth monitoring
+  bandwidthMonitor.downloadStart = Date.now();
+  bandwidthMonitor.bytesReceived = 0;
 
   updateStatus("binary-status", `Downloading (0/${data.chunks})`, "pending");
 }
@@ -329,6 +347,10 @@ function handleAssetChunkData(arrayBuffer) {
   targetStream.chunks.push(chunkData);
   targetStream.receivedChunks++;
 
+  // Update bandwidth monitoring
+  bandwidthMonitor.bytesReceived += chunkData.length;
+  updateBandwidthMetrics();
+
   console.log(
     `Received chunk ${targetStream.receivedChunks}/${targetStream.totalChunks} for ${targetAssetId} (${chunkData.length} bytes)`,
   );
@@ -374,14 +396,14 @@ function handleAssetComplete(data) {
   const url = URL.createObjectURL(blob);
 
   // Load the GLB model
-  loadGLBModel(url, data.assetId);
+  loadGLBModel(url, data.assetId, stream.lod);
 
   // Clean up
   assetStreams.delete(data.assetId);
 }
 
-function loadGLBModel(url, assetId) {
-  console.log("Loading GLB model:", assetId, "from URL:", url);
+function loadGLBModel(url, assetId, lod) {
+  console.log("Loading GLB model:", assetId, "LOD:", lod, "from URL:", url);
   updateStatus("binary-status", "Loading GLB...", "pending");
 
   gltfLoader.load(
@@ -410,6 +432,10 @@ function loadGLBModel(url, assetId) {
         }
       });
 
+      // Store metadata for adaptive streaming
+      model.userData.assetId = assetId;
+      model.userData.lod = lod;
+
       scene.add(model);
 
       // Store reference for animation
@@ -428,6 +454,81 @@ function loadGLBModel(url, assetId) {
       URL.revokeObjectURL(url);
     },
   );
+}
+
+// Bandwidth monitoring functions
+
+function updateBandwidthMetrics() {
+  const now = Date.now();
+  const elapsed = now - bandwidthMonitor.downloadStart;
+
+  if (elapsed > 0) {
+    // Calculate current bandwidth in bytes per second
+    bandwidthMonitor.currentBandwidth =
+      (bandwidthMonitor.bytesReceived / elapsed) * 1000;
+
+    // Report to server periodically
+    if (
+      now - bandwidthMonitor.lastReportTime >
+      bandwidthMonitor.reportInterval
+    ) {
+      sendBandwidthMetrics();
+      bandwidthMonitor.lastReportTime = now;
+    }
+  }
+}
+
+function sendBandwidthMetrics() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const metrics = {
+    bandwidth: bandwidthMonitor.currentBandwidth,
+    bytesReceived: bandwidthMonitor.bytesReceived,
+    timestamp: Date.now(),
+  };
+
+  ws.send(
+    JSON.stringify({
+      type: "bandwidth-metrics",
+      metrics: metrics,
+    }),
+  );
+
+  console.log(
+    `Sent bandwidth metrics: ${(bandwidthMonitor.currentBandwidth / 1024).toFixed(2)} KB/s`,
+  );
+}
+
+function handleLODRecommendation(lod) {
+  console.log(`Server recommends LOD: ${lod}`);
+  bandwidthMonitor.recommendedLOD = lod;
+
+  // Update UI to show current LOD
+  const lodIndicator = document.getElementById("lod-indicator");
+  if (lodIndicator) {
+    lodIndicator.textContent = lod.toUpperCase();
+    lodIndicator.className = lod === "high" ? "connected" : "pending";
+  }
+
+  // Auto-request new asset if LOD changed significantly
+  const currentAsset = getCurrentAssetLOD();
+  if (currentAsset && currentAsset.lod !== lod) {
+    console.log(
+      `LOD changed from ${currentAsset.lod} to ${lod}, requesting new asset...`,
+    );
+    setTimeout(() => requestAsset(currentAsset.base), 3000);
+  }
+}
+
+function getCurrentAssetLOD() {
+  // Track currently loaded asset
+  if (cube && cube.userData) {
+    return {
+      base: cube.userData.assetId,
+      lod: cube.userData.lod || "low",
+    };
+  }
+  return null;
 }
 
 initThreeJS();
