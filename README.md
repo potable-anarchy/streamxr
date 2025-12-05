@@ -87,6 +87,118 @@ The status overlay shows:
 - **Current LOD**: Quality level (HIGH/LOW) based on bandwidth
 - **Asset Status**: Download progress for 3D models
 
+
+## Dynamic LOD Generation (Phase 7)
+
+### Overview
+
+The LOD Generator automatically creates medium and low quality LOD levels from high-quality GLB assets. This eliminates the need for artists to manually create multiple LOD variants.
+
+### Features
+
+✅ **Automatic LOD Generation**
+- Detects assets with only `high.glb` file
+- Auto-generates `medium.glb` (50% quality) and `low.glb` (25% quality)
+- Uses mesh decimation to reduce triangle count
+- Caches generated LODs for fast startup
+
+✅ **Smart Caching**
+- Generated LODs stored in `cache/lods/`
+- Loads from cache on subsequent server starts
+- CLI tool to manually regenerate LODs
+- Persistent across deployments
+
+✅ **Asset Auto-Discovery**
+- Scans `public/models/` directory for asset folders
+- Supports both complete sets (high/medium/low) and single-file workflows
+- No manual asset registration required
+
+### Asset Workflow
+
+**Option 1: Single High-Quality File (Recommended)**
+```bash
+# Create new asset with only high.glb
+mkdir public/models/myAsset
+cp myModel.glb public/models/myAsset/high.glb
+
+# Server auto-generates medium.glb and low.glb on startup
+npm start
+```
+
+**Option 2: Pre-generate LODs with CLI**
+```bash
+# Generate LODs manually before deployment
+node scripts/generateLODs.js myAsset
+
+# Or generate for all assets
+node scripts/generateLODs.js --all
+```
+
+**Option 3: Provide All LOD Levels**
+```bash
+# Create asset directory with all three files
+public/models/myAsset/
+  ├── high.glb    # Original quality (100%)
+  ├── medium.glb  # Artist-created medium quality
+  └── low.glb     # Artist-created low quality
+```
+
+### CLI Tool Usage
+
+```bash
+# Generate LODs for a specific asset
+node scripts/generateLODs.js cube
+
+# Generate LODs for all assets
+node scripts/generateLODs.js --all
+
+# Clear cache and regenerate
+node scripts/generateLODs.js --clear cube
+
+# Clear all cache
+node scripts/generateLODs.js --clear-all
+
+# Show help
+node scripts/generateLODs.js
+```
+
+### LOD Quality Levels
+
+| Level  | Triangle Count | Use Case                          |
+|--------|----------------|-----------------------------------|
+| High   | 100%           | Close-up views, high bandwidth    |
+| Medium | 50%            | Normal viewing distance           |
+| Low    | 25%            | Far distance, low bandwidth       |
+
+### Cache Directory Structure
+
+```
+cache/lods/
+├── cube/
+│   ├── high.glb    # Cached original
+│   ├── medium.glb  # Generated 50% quality
+│   └── low.glb     # Generated 25% quality
+├── sphere/
+│   ├── high.glb
+│   ├── medium.glb
+│   └── low.glb
+└── myAsset/
+    ├── high.glb
+    ├── medium.glb
+    └── low.glb
+```
+
+**Note:** The `cache/` directory is excluded from version control via `.gitignore`.
+
+### Benefits
+
+- **Faster Iteration:** Artists only create high-quality models
+- **Consistent Quality:** Automated decimation ensures uniform LOD reduction
+- **Reduced Storage:** No need to commit multiple LOD variants to git
+- **Bandwidth Optimization:** Adaptive streaming selects optimal LOD per client
+- **Deployment Ready:** LODs can be pre-generated before production deployment
+
+
 ## Architecture
 
 ### Technology Stack
@@ -161,24 +273,30 @@ All 7 phases are complete:
 streamxr/
 ├── server.js                    # Main server
 ├── lib/
-│   ├── assetManager.js         # GLB asset loading
+│   ├── assetManager.js         # GLB asset loading with auto-generation
 │   ├── adaptiveStreaming.js    # Bandwidth-based LOD
 │   ├── foveatedStreaming.js    # Head tracking LOD
 │   ├── roomManager.js          # Multiuser rooms
 │   ├── objectSync.js           # Shared object state
-│   └── lodGenerator.js         # Dynamic mesh decimation
+│   └── lodGenerator.js         # Dynamic mesh decimation (Phase 7)
+├── scripts/
+│   ├── generateTestAssets.js  # Create test GLB files
+│   └── generateLODs.js         # CLI tool for LOD generation (Phase 7)
+├── cache/
+│   └── lods/                   # Generated LOD cache (gitignored)
 ├── public/
 │   ├── index.html              # Client HTML
 │   ├── client.js               # Three.js + WebXR client
 │   └── models/                 # GLB assets
 │       ├── cube/
 │       │   ├── high.glb
-│       │   └── low.glb
+│       │   ├── medium.glb      # Auto-generated
+│       │   └── low.glb         # Auto-generated
 │       └── sphere/
 │           ├── high.glb
-│           └── low.glb
-├── scripts/
-│   └── generateTestAssets.js  # Create test GLB files
+│           ├── medium.glb      # Auto-generated
+│           └── low.glb         # Auto-generated
+├── .gitignore                  # Excludes cache/
 ├── Dockerfile                  # Docker image
 ├── docker-compose.yml          # Docker Compose config
 └── package.json
@@ -324,17 +442,41 @@ Measured on Raspberry Pi 4:
 - Check WebSocket connection status in HUD
 - Verify server logs show both clients connected
 
+### LOD generation fails
+- Verify `high.glb` file exists and is valid GLB format
+- Check that cache directory is writable: `cache/lods/`
+- Try clearing cache: `node scripts/generateLODs.js --clear-all`
+- Check server console for GLB parsing errors
+
+### Missing medium.glb or low.glb files
+- Server auto-generates on first startup (if only high.glb exists)
+- Check cache: `ls cache/lods/<assetId>/`
+- Manually generate: `node scripts/generateLODs.js <assetId>`
+- Generated files are saved to both cache and asset directory
+
+### Server startup slow
+- Large assets take time to generate LODs on first run
+- Pre-generate LODs before deployment: `node scripts/generateLODs.js --all`
+- Subsequent starts use cache and are fast
+- Consider committing generated medium/low files to skip generation
+
 ## Contributing
 
 StreamXR is a hackathon project. See `DESIGN.md` for architecture details.
 
 ### Next Steps (VibKanban)
 
-Current task queue:
-1. Integrate LODGenerator into AssetManager
-2. Add CLI tool for manual LOD generation
-3. Implement progressive asset loading
-4. Add user manual quality override
+**Completed:**
+- ✅ All 7 phases implemented and deployed
+- ✅ LODGenerator integrated into AssetManager
+- ✅ CLI tool for manual LOD generation
+
+**Future Enhancements:**
+- Advanced mesh decimation algorithms (meshoptimizer, Simplygon)
+- Texture compression and LOD generation
+- Progressive asset loading
+- User manual quality override controls
+- CDN-aware routing for global deployment
 
 ## License
 
