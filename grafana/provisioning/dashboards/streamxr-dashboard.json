@@ -6,10 +6,51 @@
   "schemaVersion": 39,
   "panels": [
     {
+      "id": 100,
+      "title": "Service Health",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 3 },
+      "targets": [
+        {
+          "expr": "up{job=\"streamxr\"}",
+          "refId": "A",
+          "legendFormat": "StreamXR Server"
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "DOWN", "color": "red" },
+                "1": { "text": "UP", "color": "green" }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 0.5, "color": "yellow" },
+              { "value": 1, "color": "green" }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
       "id": 1,
       "title": "Active WebSocket Connections",
       "type": "stat",
-      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "gridPos": { "x": 0, "y": 3, "w": 6, "h": 4 },
       "targets": [
         {
           "expr": "streamxr_websocket_connections",
@@ -37,7 +78,7 @@
       "id": 2,
       "title": "Users Per Room",
       "type": "stat",
-      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "gridPos": { "x": 6, "y": 3, "w": 6, "h": 4 },
       "targets": [
         {
           "expr": "sum(streamxr_room_users)",
@@ -53,7 +94,7 @@
       "id": 3,
       "title": "Shared Objects",
       "type": "stat",
-      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "gridPos": { "x": 12, "y": 3, "w": 6, "h": 4 },
       "targets": [
         {
           "expr": "sum(streamxr_shared_objects_total)",
@@ -69,24 +110,36 @@
       "id": 4,
       "title": "CPU Usage %",
       "type": "stat",
-      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "gridPos": { "x": 18, "y": 3, "w": 6, "h": 4 },
       "targets": [
         {
-          "expr": "rate(process_cpu_seconds_total[1m]) * 100",
+          "expr": "rate(process_cpu_seconds_total{job=\"streamxr\"}[1m]) * 100",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percent"
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 70, "color": "yellow" },
+              { "value": 90, "color": "red" }
+            ]
+          }
         }
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background"
       }
     },
     {
       "id": 5,
       "title": "WebSocket Connections Over Time",
       "type": "timeseries",
-      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "gridPos": { "x": 0, "y": 7, "w": 12, "h": 8 },
       "targets": [
         {
           "expr": "streamxr_websocket_connections",
@@ -108,7 +161,7 @@
       "id": 6,
       "title": "Asset Requests Rate",
       "type": "timeseries",
-      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "gridPos": { "x": 12, "y": 7, "w": 12, "h": 8 },
       "targets": [
         {
           "expr": "rate(streamxr_asset_requests_total[1m])",
@@ -126,7 +179,7 @@
       "id": 7,
       "title": "Asset Data Transfer Rate",
       "type": "timeseries",
-      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "gridPos": { "x": 0, "y": 15, "w": 12, "h": 8 },
       "targets": [
         {
           "expr": "rate(streamxr_asset_bytes_transferred_total[1m])",
@@ -144,7 +197,7 @@
       "id": 8,
       "title": "Client Bandwidth",
       "type": "timeseries",
-      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "gridPos": { "x": 12, "y": 15, "w": 12, "h": 8 },
       "targets": [
         {
           "expr": "streamxr_client_bandwidth_bps",
@@ -162,10 +215,10 @@
       "id": 9,
       "title": "CPU Usage",
       "type": "timeseries",
-      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 6 },
+      "gridPos": { "x": 0, "y": 23, "w": 12, "h": 6 },
       "targets": [
         {
-          "expr": "rate(process_cpu_seconds_total[1m]) * 100",
+          "expr": "rate(process_cpu_seconds_total{job=\"streamxr\"}[1m]) * 100",
           "refId": "A",
           "legendFormat": "CPU %"
         }
@@ -180,10 +233,10 @@
       "id": 10,
       "title": "Memory Usage",
       "type": "timeseries",
-      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 6 },
+      "gridPos": { "x": 12, "y": 23, "w": 12, "h": 6 },
       "targets": [
         {
-          "expr": "process_resident_memory_bytes",
+          "expr": "process_resident_memory_bytes{job=\"streamxr\"}",
           "refId": "A",
           "legendFormat": "Memory"
         }
