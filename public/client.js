@@ -94,13 +94,18 @@ function initThreeJS() {
 }
 
 function animate() {
-  if (cube) {
+  if (cube && !grabbedObject) {
+    // Only rotate cube when not being grabbed
     cube.rotation.x += 0.01;
     cube.rotation.y += 0.01;
   }
 
   // Send head tracking data periodically
   sendHeadTrackingData();
+
+  // Update hand tracking
+  updateHandIndicators();
+  updateGrabbedObject();
 
   renderer.render(scene, camera);
 }
@@ -856,8 +861,8 @@ function disableHeadTracking() {
 }
 
 /**
- * Initialize WebXR support for VR head tracking
- * This enables more accurate head tracking in VR mode
+ * Initialize WebXR support for VR/AR head tracking
+ * This enables more accurate head tracking in XR mode
  */
 function initWebXR() {
   if (!navigator.xr) {
@@ -922,16 +927,18 @@ function addXRButton(text, onClick, leftPosition) {
 }
 
 /**
- * Enter VR/AR mode with WebXR
+ * Enter VR/AR mode with WebXR and hand tracking support
  */
 async function enterVR(mode = "immersive-vr") {
   try {
     console.log(`Requesting ${mode} session...`);
 
-    // Start with minimal session config to avoid timeouts
-    const session = await navigator.xr.requestSession(mode, {
-      optionalFeatures: ["local-floor"],
-    });
+    // Request XR session with hand tracking support
+    const sessionInit = {
+      optionalFeatures: ["local-floor", "hand-tracking", "layers"],
+    };
+
+    const session = await navigator.xr.requestSession(mode, sessionInit);
 
     console.log(`Session created, setting up renderer...`);
     renderer.xr.enabled = true;
@@ -939,20 +946,64 @@ async function enterVR(mode = "immersive-vr") {
 
     console.log(`Entered ${mode} mode successfully`);
 
+    // For AR mode, make scene background transparent
+    if (mode === "immersive-ar") {
+      scene.background = null;
+      console.log("AR mode: scene background set to transparent");
+    }
+
     // Enable head tracking for XR
     enableHeadTracking();
+
+    // Setup XR controllers and hand tracking
+    setupXRControllers();
+
+    // Monitor input sources for hand tracking
+    session.addEventListener("inputsourceschange", (event) => {
+      console.log("Input sources changed");
+      event.added.forEach((source) => {
+        console.log("New input source:", source.handedness, source.targetRayMode);
+        if (source.hand) {
+          console.log("Hand tracking available for:", source.handedness);
+        }
+      });
+      event.removed.forEach((source) => {
+        console.log("Removed input source:", source.handedness);
+      });
+    });
 
     session.addEventListener("end", () => {
       console.log(`${mode} session ended`);
       renderer.xr.enabled = false;
       disableHeadTracking();
+
+      // Restore scene background
+      scene.background = new THREE.Color(0x1a1a2e);
+
+      // Clean up hand tracking
+      handInputSources.clear();
+      handIndicators.forEach((indicator, controller) => {
+        removeHandIndicator(controller);
+      });
+      handControllers = [];
+      grabbedObject = null;
+      grabbingHand = null;
     });
+
+    console.log("Hand tracking initialized");
   } catch (error) {
     console.error(`Failed to enter ${mode}:`, error);
     alert(
       `Failed to start ${mode} session: ${error.message}\n\nTry reloading the page.`,
     );
   }
+}
+
+/**
+ * Legacy function for backward compatibility
+ */
+async function enterVR() {
+  return enterXR("immersive-vr");
 }
 
 /**
@@ -1211,10 +1262,17 @@ function handleObjectDeleted(objectId) {
   console.log("Deleted object:", objectId);
 }
 
-// XR Controller Input
+// XR Controller Input and Hand Tracking
+
+// Hand tracking state
+let handControllers = [];
+let handInputSources = new Map();
+let grabbedObject = null;
+let grabbingHand = null;
+let handIndicators = new Map();
 
 /**
- * Setup XR controllers for object spawning
+ * Setup XR controllers for object spawning and hand tracking
  */
 function setupXRControllers() {
   if (!renderer.xr || !renderer.xr.enabled) {
@@ -1226,30 +1284,288 @@ function setupXRControllers() {
   const controller1 = renderer.xr.getController(0);
   controller1.addEventListener("selectstart", onSelectStart);
   controller1.addEventListener("selectend", onSelectEnd);
+  controller1.addEventListener("connected", onControllerConnected);
+  controller1.addEventListener("disconnected", onControllerDisconnected);
   scene.add(controller1);
+  handControllers.push(controller1);
 
   // Controller 2
   const controller2 = renderer.xr.getController(1);
   controller2.addEventListener("selectstart", onSelectStart);
   controller2.addEventListener("selectend", onSelectEnd);
+  controller2.addEventListener("connected", onControllerConnected);
+  controller2.addEventListener("disconnected", onControllerDisconnected);
   scene.add(controller2);
+  handControllers.push(controller2);
 
   console.log("XR controllers setup complete");
+}
+
+/**
+ * Handle controller connection event
+ */
+function onControllerConnected(event) {
+  const controller = event.target;
+  const inputSource = event.data;
+
+  console.log("Controller connected:", inputSource.handedness, inputSource.targetRayMode);
+
+  // Check if this is a hand input source
+  if (inputSource.hand) {
+    console.log("Hand tracking input detected:", inputSource.handedness);
+    handInputSources.set(controller, inputSource);
+    createHandIndicator(controller, inputSource.handedness);
+  } else {
+    console.log("Standard controller detected:", inputSource.handedness);
+  }
+
+  // Store input source reference
+  controller.userData.inputSource = inputSource;
+}
+
+/**
+ * Handle controller disconnection event
+ */
+function onControllerDisconnected(event) {
+  const controller = event.target;
+  const inputSource = controller.userData.inputSource;
+
+  if (inputSource) {
+    console.log("Controller disconnected:", inputSource.handedness);
+    handInputSources.delete(controller);
+    removeHandIndicator(controller);
+  }
+}
+
+/**
+ * Create visual indicator for hand position
+ */
+function createHandIndicator(controller, handedness) {
+  // Create a small sphere to represent hand position
+  const geometry = new THREE.SphereGeometry(0.05, 16, 16);
+  const material = new THREE.MeshStandardMaterial({
+    color: handedness === "left" ? 0x00ffff : 0xff00ff,
+    emissive: handedness === "left" ? 0x00ffff : 0xff00ff,
+    emissiveIntensity: 0.5,
+    transparent: true,
+    opacity: 0.7,
+  });
+
+  const indicator = new THREE.Mesh(geometry, material);
+  controller.add(indicator);
+  handIndicators.set(controller, indicator);
+
+  console.log(`Hand indicator created for ${handedness} hand`);
+}
+
+/**
+ * Remove hand indicator
+ */
+function removeHandIndicator(controller) {
+  const indicator = handIndicators.get(controller);
+  if (indicator) {
+    controller.remove(indicator);
+    indicator.geometry.dispose();
+    indicator.material.dispose();
+    handIndicators.delete(controller);
+  }
+}
+
+/**
+ * Update hand indicators based on proximity to grabbable objects
+ */
+function updateHandIndicators() {
+  handIndicators.forEach((indicator, controller) => {
+    const nearbyObject = getNearbyGrabbableObject(controller);
+
+    if (nearbyObject && !grabbedObject) {
+      // Highlight when near grabbable object
+      indicator.material.emissiveIntensity = 1.0;
+      indicator.scale.set(1.5, 1.5, 1.5);
+
+      // Also highlight the object
+      if (nearbyObject.userData.originalColor === undefined) {
+        nearbyObject.userData.originalColor = nearbyObject.material.color.getHex();
+      }
+      nearbyObject.material.emissive.setHex(0xffff00);
+      nearbyObject.material.emissiveIntensity = 0.3;
+    } else {
+      // Reset to normal
+      indicator.material.emissiveIntensity = 0.5;
+      indicator.scale.set(1, 1, 1);
+    }
+  });
+
+  // Reset highlighting for objects not near any hand
+  if (!grabbedObject) {
+    sharedObjects.forEach((object) => {
+      let isNearAnyHand = false;
+      handControllers.forEach((controller) => {
+        if (getNearbyGrabbableObject(controller) === object) {
+          isNearAnyHand = true;
+        }
+      });
+
+      if (!isNearAnyHand && object.userData.originalColor !== undefined) {
+        object.material.emissive.setHex(0x000000);
+        object.material.emissiveIntensity = 0;
+      }
+    });
+
+    // Also check the main cube
+    if (cube && cube.isMesh) {
+      let isNearAnyHand = false;
+      handControllers.forEach((controller) => {
+        if (getNearbyGrabbableObject(controller) === cube) {
+          isNearAnyHand = true;
+        }
+      });
+
+      if (!isNearAnyHand && cube.userData.originalColor !== undefined) {
+        cube.material.emissive.setHex(0x000000);
+        cube.material.emissiveIntensity = 0;
+      }
+    }
+  }
+}
+
+/**
+ * Get nearby grabbable object for a controller
+ */
+function getNearbyGrabbableObject(controller) {
+  const controllerPos = new THREE.Vector3();
+  controller.getWorldPosition(controllerPos);
+
+  const grabDistance = 0.3; // Maximum distance to grab
+
+  // Check main cube
+  if (cube && cube.isMesh) {
+    const cubePos = new THREE.Vector3();
+    cube.getWorldPosition(cubePos);
+    if (controllerPos.distanceTo(cubePos) < grabDistance) {
+      return cube;
+    }
+  }
+
+  // Check shared objects
+  for (const [id, object] of sharedObjects) {
+    const objPos = new THREE.Vector3();
+    object.getWorldPosition(objPos);
+    if (controllerPos.distanceTo(objPos) < grabDistance) {
+      return object;
+    }
+  }
+
+  return null;
 }
 
 function onSelectStart(event) {
   const controller = event.target;
 
-  // Get controller position
-  const position = new THREE.Vector3();
-  controller.getWorldPosition(position);
+  // Check if this is a hand input source
+  const inputSource = handInputSources.get(controller);
 
-  // Spawn object at controller position
-  spawnObject("cube", [position.x, position.y, position.z]);
+  if (inputSource && inputSource.hand) {
+    // Hand tracking: try to grab nearby object
+    handleHandGrab(controller);
+  } else {
+    // Standard controller: spawn object
+    const position = new THREE.Vector3();
+    controller.getWorldPosition(position);
+    spawnObject("cube", [position.x, position.y, position.z]);
+  }
 }
 
 function onSelectEnd(event) {
-  // Could be used for drag-and-drop completion
+  const controller = event.target;
+
+  // Release grabbed object
+  if (grabbedObject && grabbingHand === controller) {
+    releaseGrabbedObject();
+  }
+}
+
+/**
+ * Handle hand grab gesture
+ */
+function handleHandGrab(controller) {
+  if (grabbedObject) {
+    console.log("Already holding an object");
+    return;
+  }
+
+  const nearbyObject = getNearbyGrabbableObject(controller);
+
+  if (nearbyObject) {
+    grabbedObject = nearbyObject;
+    grabbingHand = controller;
+
+    // Store offset between hand and object
+    const handPos = new THREE.Vector3();
+    controller.getWorldPosition(handPos);
+
+    const objectPos = new THREE.Vector3();
+    nearbyObject.getWorldPosition(objectPos);
+
+    controller.userData.grabOffset = objectPos.clone().sub(handPos);
+
+    // Visual feedback
+    nearbyObject.material.emissive.setHex(0x00ff00);
+    nearbyObject.material.emissiveIntensity = 0.5;
+
+    console.log("Grabbed object:", nearbyObject.userData.objectId || "main cube");
+  }
+}
+
+/**
+ * Release grabbed object
+ */
+function releaseGrabbedObject() {
+  if (!grabbedObject) return;
+
+  // Reset visual feedback
+  if (grabbedObject.userData.originalColor !== undefined) {
+    grabbedObject.material.emissive.setHex(0x000000);
+    grabbedObject.material.emissiveIntensity = 0;
+  }
+
+  console.log("Released object:", grabbedObject.userData.objectId || "main cube");
+
+  // Sync position to server if it's a shared object
+  if (grabbedObject.userData.objectId) {
+    const pos = grabbedObject.position;
+    const rot = grabbedObject.rotation;
+    updateObjectPosition(
+      grabbedObject.userData.objectId,
+      [pos.x, pos.y, pos.z],
+      [rot.x, rot.y, rot.z]
+    );
+  }
+
+  grabbedObject = null;
+  grabbingHand = null;
+}
+
+/**
+ * Update grabbed object position based on hand movement
+ */
+function updateGrabbedObject() {
+  if (!grabbedObject || !grabbingHand) return;
+
+  const handPos = new THREE.Vector3();
+  grabbingHand.getWorldPosition(handPos);
+
+  // Apply stored offset
+  const grabOffset = grabbingHand.userData.grabOffset || new THREE.Vector3();
+  const newPos = handPos.clone().add(grabOffset);
+
+  grabbedObject.position.copy(newPos);
+
+  // Smoothly interpolate rotation to match hand rotation
+  const handQuaternion = new THREE.Quaternion();
+  grabbingHand.getWorldQuaternion(handQuaternion);
+
+  grabbedObject.quaternion.slerp(handQuaternion, 0.1);
 }
 
 // UI Setup
