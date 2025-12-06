@@ -48,10 +48,13 @@ docker run -d -p 3000:3000 --name streamxr streamxr
 ### Desktop Browser (Testing)
 
 1. **Open** https://streamxr.brad-dougherty.com
-2. **Look around** - Move your mouse to rotate camera
+2. **Look around** - Left-click and drag to rotate camera
 3. **Move** - Use WASD or arrow keys
 4. **Spawn Objects** - Click "Spawn Cube", "Spawn Sphere", or "Spawn Cone" buttons
-5. **Multi-window Test** - Open multiple browser tabs to test multiuser
+5. **Grab Objects** - Right-click or Shift+Left-click on an object to grab it
+6. **Move Objects** - While holding the button, move your mouse to drag the object
+7. **Release Objects** - Release the mouse button to let go of the object
+8. **Multi-window Test** - Open multiple browser tabs to test multiuser collaboration
 
 ### WebXR Devices (AR/VR)
 
@@ -61,7 +64,10 @@ docker run -d -p 3000:3000 --name streamxr streamxr
 2. Navigate to https://streamxr.brad-dougherty.com
 3. Click **"Enter VR"** button when prompted
 4. **Look around** - Head tracking is automatic
-5. **Spawn objects** - Use controller to point and trigger
+5. **Spawn objects** - Point at empty space and press trigger
+6. **Grab objects** - Point at an object and press trigger to grab it
+7. **Move objects** - While holding trigger, move controller to drag the object
+8. **Release objects** - Release trigger to let go
 
 #### iPhone/Android (WebXR AR)
 
@@ -86,6 +92,41 @@ The status overlay shows:
 - **Peers**: Number of other users in the room
 - **Current LOD**: Quality level (HIGH/LOW) based on bandwidth
 - **Asset Status**: Download progress for 3D models
+
+### Shared Object Manipulation
+
+#### How It Works
+
+The system enables real-time collaborative manipulation of 3D objects:
+
+1. **Object Ownership**: When you grab an object, you gain exclusive control
+2. **Automatic Release**: Objects auto-release after 5 seconds of inactivity
+3. **Visual Feedback**:
+   - Objects you're grabbing show no indicator
+   - Objects grabbed by others show a colored wireframe (user's avatar color)
+4. **Conflict Prevention**: If someone else is holding an object, you can't grab it
+5. **Real-time Sync**: All position updates broadcast at 20Hz (50ms intervals)
+
+#### Controls Summary
+
+**Desktop (Mouse)**:
+- **Left-click + drag**: Rotate camera
+- **Right-click or Shift+Left-click**: Grab object
+- **Move mouse while holding**: Drag object in 3D space
+- **Release button**: Drop object
+
+**VR (Controllers)**:
+- **Point + Trigger**: Grab object (or spawn if pointing at empty space)
+- **Move controller**: Object follows with offset preserved
+- **Release trigger**: Drop object
+
+#### Technical Details
+
+- Objects persist on the server while it's running (in-memory)
+- Ownership timeout prevents deadlocks (5 seconds)
+- Position updates are throttled to avoid network spam
+- Each object tracks: position, rotation, scale, color, creator, owner
+- Metrics: Grafana tracks shared object count per room
 
 
 ## Dynamic LOD Generation (Phase 7)
@@ -260,6 +301,11 @@ All 7 phases are complete:
 - ObjectSync for shared object state
 - XR controller support
 - UI buttons and controller triggers
+- **Grab and move shared objects** (VR controllers and mouse)
+- **Object ownership system** with 5-second timeout
+- **Visual ownership indicators** (colored wireframes)
+- **Real-time position synchronization** across all clients
+- **Conflict prevention** - only one user can manipulate an object at a time
 
 ### ✅ Phase 7: Dynamic LOD
 - GLB parser and rebuilder

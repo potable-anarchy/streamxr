@@ -146,6 +146,15 @@ wss.on("connection", (ws) => {
       } else if (data.type === "delete-object") {
         // Delete an object
         handleDeleteObject(data.roomId, data.objectId);
+      } else if (data.type === "grab-object") {
+        // Grab an object (acquire ownership)
+        handleGrabObject(clientId, ws, data.roomId, data.objectId);
+      } else if (data.type === "release-object") {
+        // Release an object (give up ownership)
+        handleReleaseObject(clientId, data.roomId, data.objectId);
+      } else if (data.type === "move-object") {
+        // Move an object (only if owned)
+        handleMoveObject(clientId, data.roomId, data.objectId, data.position, data.rotation);
       }
     } catch (error) {
       console.error("Error parsing message:", error);
@@ -157,6 +166,9 @@ wss.on("connection", (ws) => {
     clients.delete(clientId);
     adaptiveStreaming.removeClient(clientId);
     foveatedStreaming.removeClient(clientId);
+
+    // Release all objects owned by this user
+    objectSync.releaseAllUserObjects(clientId);
 
     // Update metrics
     wsConnections.set(clients.size);
@@ -485,6 +497,99 @@ function handleDeleteObject(roomId, objectId) {
     }
   } catch (error) {
     console.error("Error deleting object:", error);
+  }
+}
+
+function handleGrabObject(userId, ws, roomId, objectId) {
+  try {
+    const result = objectSync.grabObject(roomId, objectId, userId);
+
+    if (result.success) {
+      // Broadcast to all clients that this object is now grabbed
+      broadcastToAll({
+        type: "object-grabbed",
+        objectId: objectId,
+        userId: userId,
+        object: result.object,
+      });
+
+      console.log(`User ${userId} grabbed object ${objectId} in room ${roomId}`);
+    } else {
+      // Send failure message back to requesting user
+      ws.send(
+        JSON.stringify({
+          type: "grab-failed",
+          objectId: objectId,
+          ownedBy: result.ownedBy,
+          message: "Object is currently owned by another user",
+        })
+      );
+    }
+  } catch (error) {
+    console.error("Error grabbing object:", error);
+    ws.send(
+      JSON.stringify({
+        type: "error",
+        message: error.message,
+      })
+    );
+  }
+}
+
+function handleReleaseObject(userId, roomId, objectId) {
+  try {
+    const released = objectSync.releaseObject(roomId, objectId, userId);
+
+    if (released) {
+      // Broadcast to all clients that this object is now released
+      broadcastToAll({
+        type: "object-released",
+        objectId: objectId,
+        userId: userId,
+      });
+
+      console.log(`User ${userId} released object ${objectId} in room ${roomId}`);
+    }
+  } catch (error) {
+    console.error("Error releasing object:", error);
+  }
+}
+
+function handleMoveObject(userId, roomId, objectId, position, rotation) {
+  try {
+    const object = objectSync.getObject(roomId, objectId);
+
+    if (!object) {
+      console.error(`Object ${objectId} not found in room ${roomId}`);
+      return;
+    }
+
+    // Check if user owns this object
+    if (object.ownedBy !== userId) {
+      console.warn(`User ${userId} tried to move object ${objectId} but doesn't own it`);
+      return;
+    }
+
+    // Update the object position
+    const updates = {};
+    if (position) updates.position = position;
+    if (rotation) updates.rotation = rotation;
+
+    const updatedObject = objectSync.updateObject(roomId, objectId, updates);
+
+    // Refresh the ownership timeout
+    objectSync.refreshOwnership(objectId, userId);
+
+    // Broadcast the updated position to all other clients
+    broadcastToOthers(userId, {
+      type: "object-moved",
+      objectId: objectId,
+      position: updatedObject.position,
+      rotation: updatedObject.rotation,
+      userId: userId,
+    });
+  } catch (error) {
+    console.error("Error moving object:", error);
   }
 }
 

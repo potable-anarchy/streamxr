@@ -1262,6 +1262,80 @@ function handleObjectDeleted(objectId) {
   console.log("Deleted object:", objectId);
 }
 
+function handleObjectGrabbed(objectId, userId, objectData) {
+  const mesh = sharedObjects.get(objectId);
+  if (!mesh) {
+    console.warn("Grabbed object not found locally:", objectId);
+    return;
+  }
+
+  // Store ownership information on the mesh
+  mesh.userData.ownedBy = userId;
+
+  // Visual indication: Add highlight if owned by another user
+  if (userId !== clientId) {
+    addOwnershipIndicator(mesh, userId);
+  }
+
+  console.log(`Object ${objectId} grabbed by user ${userId}`);
+}
+
+function handleObjectReleased(objectId, userId) {
+  const mesh = sharedObjects.get(objectId);
+  if (!mesh) {
+    console.warn("Released object not found locally:", objectId);
+    return;
+  }
+
+  // Clear ownership
+  mesh.userData.ownedBy = null;
+
+  // Remove ownership indicator
+  removeOwnershipIndicator(mesh);
+
+  console.log(`Object ${objectId} released by user ${userId}`);
+}
+
+function handleObjectMoved(objectId, position, rotation) {
+  const mesh = sharedObjects.get(objectId);
+  if (!mesh) {
+    console.warn("Moved object not found locally:", objectId);
+    return;
+  }
+
+  // Don't update if we're currently grabbing this object
+  if (grabbedObject && grabbedObject.objectId === objectId) {
+    return;
+  }
+
+  // Update position and rotation
+  mesh.position.set(position[0], position[1], position[2]);
+  mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
+}
+
+function addOwnershipIndicator(mesh, userId) {
+  // Remove existing indicator if any
+  removeOwnershipIndicator(mesh);
+
+  // Get user color from avatars
+  const avatar = avatars.get(userId);
+  const userColor = avatar ? avatar.userData.color : 0xff0000;
+
+  // Create a wireframe box around the object
+  const box = new THREE.BoxHelper(mesh, userColor);
+  box.name = "ownershipIndicator";
+  scene.add(box);
+  mesh.userData.ownershipIndicator = box;
+}
+
+function removeOwnershipIndicator(mesh) {
+  if (mesh.userData.ownershipIndicator) {
+    scene.remove(mesh.userData.ownershipIndicator);
+    mesh.userData.ownershipIndicator.dispose();
+    delete mesh.userData.ownershipIndicator;
+  }
+}
+
 // XR Controller Input and Hand Tracking
 
 // Hand tracking state
@@ -1469,10 +1543,56 @@ function onSelectStart(event) {
     // Hand tracking: try to grab nearby object
     handleHandGrab(controller);
   } else {
-    // Standard controller: spawn object
-    const position = new THREE.Vector3();
-    controller.getWorldPosition(position);
-    spawnObject("cube", [position.x, position.y, position.z]);
+    // Standard controller: use raycast to grab or spawn
+    const controllerPos = new THREE.Vector3();
+    controller.getWorldPosition(controllerPos);
+
+    // Create a raycaster from controller
+    const tempMatrix = new THREE.Matrix4();
+    tempMatrix.identity().extractRotation(controller.matrixWorld);
+    const raycaster = new THREE.Raycaster();
+    raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+
+    // Check if we're pointing at a shared object
+    const objectMeshes = Array.from(sharedObjects.values());
+    const intersects = raycaster.intersectObjects(objectMeshes, false);
+
+    if (intersects.length > 0) {
+      // Try to grab the closest object
+      const targetMesh = intersects[0].object;
+      const objectId = targetMesh.userData.objectId;
+
+      // Check if object is already owned by someone else
+      if (targetMesh.userData.ownedBy && targetMesh.userData.ownedBy !== clientId) {
+        console.log("Object is already grabbed by another user");
+        return;
+      }
+
+      // Send grab request to server
+      ws.send(
+        JSON.stringify({
+          type: "grab-object",
+          roomId: roomId,
+          objectId: objectId,
+        })
+      );
+
+      // Store grabbed object locally
+      grabbedObject = {
+        objectId: objectId,
+        mesh: targetMesh,
+        controller: controller,
+      };
+
+      // Calculate offset from controller to object
+      grabOffset.copy(targetMesh.position).sub(controllerPos);
+
+      console.log(`Grabbed object ${objectId}`);
+    } else {
+      // No object hit, spawn a new cube at controller position
+      spawnObject("cube", [controllerPos.x, controllerPos.y, controllerPos.z]);
+    }
   }
 }
 
@@ -1480,8 +1600,23 @@ function onSelectEnd(event) {
   const controller = event.target;
 
   // Release grabbed object
-  if (grabbedObject && grabbingHand === controller) {
-    releaseGrabbedObject();
+  if (grabbedObject) {
+    // Check if this is the hand tracking or controller that grabbed it
+    if (grabbingHand === controller) {
+      // Hand tracking release
+      releaseGrabbedObject();
+    } else if (grabbedObject.controller === controller) {
+      // Standard controller release - send to server
+      ws.send(
+        JSON.stringify({
+          type: "release-object",
+          roomId: roomId,
+          objectId: grabbedObject.objectId,
+        })
+      );
+      console.log(`Released object ${grabbedObject.objectId}`);
+      grabbedObject = null;
+    }
   }
 }
 
