@@ -13,6 +13,14 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+// Add WebXR permissions headers
+app.use((req, res, next) => {
+  res.setHeader("Permissions-Policy", "xr-spatial-tracking=(self)");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+  next();
+});
+
 app.use(express.static("public"));
 app.use(express.json());
 app.use(express.raw({ type: "model/gltf-binary", limit: "50mb" }));
@@ -88,7 +96,11 @@ wss.on("connection", (ws) => {
   // Update metrics
   wsConnections.set(clients.size);
   const roomUsersList = roomManager.getRoomUsers(roomInfo.room) || [];
-  roomUsers.set({ room: roomInfo.room }, roomUsersList.length + 1); // +1 for current user
+  roomUsers.set({ room: roomInfo.room }, roomUsersList.length); // getRoomUsers already includes current user
+
+  // Initialize object count for this room
+  const objects = objectSync.getRoomObjects(roomInfo.room);
+  objectCount.set({ room: roomInfo.room }, objects.length);
 
   console.log(`Client ${clientId} connected. Total clients: ${clients.size}`);
 
@@ -423,7 +435,7 @@ function handleCreateObject(roomId, objectData) {
     const createdObject = objectSync.createObject(roomId, objectData);
 
     // Update object count metric
-    const objects = objectSync.getObjects(roomId);
+    const objects = objectSync.getRoomObjects(roomId);
     objectCount.set({ room: roomId }, objects.length);
 
     // Broadcast to all clients
@@ -460,7 +472,7 @@ function handleDeleteObject(roomId, objectId) {
 
     if (deleted) {
       // Update object count metric
-      const objects = objectSync.getObjects(roomId);
+      const objects = objectSync.getRoomObjects(roomId);
       objectCount.set({ room: roomId }, objects.length);
 
       // Broadcast to all clients

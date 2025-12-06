@@ -200,14 +200,15 @@
       "gridPos": { "x": 12, "y": 15, "w": 12, "h": 8 },
       "targets": [
         {
-          "expr": "streamxr_client_bandwidth_bps",
+          "expr": "streamxr_client_bandwidth_bps or vector(0)",
           "refId": "A",
           "legendFormat": "{{client_id}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "bps"
+          "unit": "bps",
+          "noValue": "0"
         }
       }
     },

@@ -89,12 +89,11 @@ function initThreeJS() {
 
   window.addEventListener("resize", onWindowResize);
 
-  animate();
+  // Use setAnimationLoop for XR compatibility
+  renderer.setAnimationLoop(animate);
 }
 
 function animate() {
-  requestAnimationFrame(animate);
-
   if (cube) {
     cube.rotation.x += 0.01;
     cube.rotation.y += 0.01;
@@ -523,6 +522,10 @@ function updateAvatarPosition(userId, positionData) {
 // Asset Streaming Functions
 
 function requestAsset(assetId, lod = null) {
+  if (!assetId) {
+    console.error("requestAsset called with undefined assetId");
+    return;
+  }
   console.log("Requesting asset:", assetId, lod ? `LOD: ${lod}` : "(adaptive)");
   ws.send(
     JSON.stringify({
@@ -772,7 +775,7 @@ function handleLODRecommendation(lod) {
 
   // Auto-request new asset if LOD changed significantly
   const currentAsset = getCurrentAssetLOD();
-  if (currentAsset && currentAsset.lod !== lod) {
+  if (currentAsset && currentAsset.base && currentAsset.lod !== lod) {
     console.log(
       `LOD changed from ${currentAsset.lod} to ${lod}, requesting new asset...`,
     );
@@ -862,45 +865,93 @@ function initWebXR() {
     return;
   }
 
-  // Check for VR support
-  navigator.xr.isSessionSupported("immersive-vr").then((supported) => {
-    if (supported) {
-      console.log("VR supported, WebXR available");
-      // Add VR button if supported
-      const vrButton = document.createElement("button");
-      vrButton.textContent = "Enter VR";
-      vrButton.style.position = "absolute";
-      vrButton.style.bottom = "20px";
-      vrButton.style.left = "20px";
-      vrButton.style.zIndex = "999";
-      vrButton.onclick = enterVR;
-      document.body.appendChild(vrButton);
-    } else {
-      console.log("VR not supported, using desktop head tracking");
-    }
-  });
+  console.log("Checking WebXR support...");
+
+  // Check for VR support first
+  navigator.xr
+    .isSessionSupported("immersive-vr")
+    .then((vrSupported) => {
+      console.log("VR supported:", vrSupported);
+
+      // Check for AR support (Vision Pro and AR devices)
+      navigator.xr
+        .isSessionSupported("immersive-ar")
+        .then((arSupported) => {
+          console.log("AR supported:", arSupported);
+
+          if (vrSupported) {
+            console.log("Adding VR button");
+            addXRButton("Enter VR", () => enterVR("immersive-vr"), "20px");
+          }
+
+          if (arSupported) {
+            console.log("Adding AR button");
+            addXRButton(
+              "Enter AR",
+              () => enterVR("immersive-ar"),
+              vrSupported ? "140px" : "20px",
+            );
+          }
+
+          if (!vrSupported && !arSupported) {
+            console.log(
+              "Neither VR nor AR supported, using desktop head tracking",
+            );
+          }
+        })
+        .catch((error) => {
+          console.error("Error checking AR support:", error);
+        });
+    })
+    .catch((error) => {
+      console.error("Error checking VR support:", error);
+    });
+}
+
+function addXRButton(text, onClick, leftPosition) {
+  const button = document.createElement("button");
+  button.textContent = text;
+  button.style.position = "absolute";
+  button.style.bottom = "20px";
+  button.style.left = leftPosition;
+  button.style.zIndex = "999";
+  button.style.padding = "10px 20px";
+  button.style.fontSize = "16px";
+  button.onclick = onClick;
+  document.body.appendChild(button);
 }
 
 /**
- * Enter VR mode with WebXR
+ * Enter VR/AR mode with WebXR
  */
-async function enterVR() {
+async function enterVR(mode = "immersive-vr") {
   try {
-    const session = await navigator.xr.requestSession("immersive-vr");
+    console.log(`Requesting ${mode} session...`);
+
+    // Start with minimal session config to avoid timeouts
+    const session = await navigator.xr.requestSession(mode, {
+      optionalFeatures: ["local-floor"],
+    });
+
+    console.log(`Session created, setting up renderer...`);
     renderer.xr.enabled = true;
     await renderer.xr.setSession(session);
 
-    console.log("Entered VR mode");
+    console.log(`Entered ${mode} mode successfully`);
 
-    // Enable head tracking for VR
+    // Enable head tracking for XR
     enableHeadTracking();
 
     session.addEventListener("end", () => {
-      console.log("VR session ended");
+      console.log(`${mode} session ended`);
+      renderer.xr.enabled = false;
       disableHeadTracking();
     });
   } catch (error) {
-    console.error("Failed to enter VR:", error);
+    console.error(`Failed to enter ${mode}:`, error);
+    alert(
+      `Failed to start ${mode} session: ${error.message}\n\nTry reloading the page.`,
+    );
   }
 }
 
