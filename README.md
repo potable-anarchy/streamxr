@@ -416,55 +416,96 @@ const lods = await generator.generateLODs(highGLBBuffer, 'myAsset');
 
 ## Deployment
 
-### Production (Raspberry Pi + Cloudflare)
+### Production (Mac Studio Lima VM + Cloudflare)
 
 Current deployment:
-- **Server**: Raspberry Pi at 100.120.77.39
-- **Container**: Docker (streamxr:latest)
-- **Tunnel**: Cloudflare Tunnel (streamxr)
-- **DNS**: streamxr.brad-dougherty.com
+- **Host**: Mac Studio (100.81.45.56) via Tailscale
+- **VM**: Lima VM (lima-streamxr) at 100.126.174.124
+- **Specs**: Ubuntu 24.04, 4 CPUs, 8GB RAM, 100GB disk
+- **Container**: Docker Compose (nginx, streamxr, prometheus, grafana)
+- **Tunnel**: Cloudflare Tunnel (coder-server)
+- **DNS**: 
+  - streamxr.brad-dougherty.com
+  - streamxr-grafana.brad-dougherty.com
+  - streamxr-prometheus.brad-dougherty.com
 - **Status**: Live and running
+
+**Access URLs:**
+- **StreamXR**: https://streamxr.brad-dougherty.com
+- **Grafana Dashboard**: https://streamxr-grafana.brad-dougherty.com (admin/admin)
+- **Prometheus Metrics**: https://streamxr-prometheus.brad-dougherty.com
 
 Update deployment:
 ```bash
-# Build new image
-docker build -t streamxr:latest .
-docker save streamxr:latest | gzip > streamxr.tar.gz
+# On local machine
+cd /Users/brad/streamxr
+tar --exclude='._*' --exclude='node_modules' --exclude='.git' --exclude='*.tar.gz' -czf streamxr-deploy.tar.gz .
 
-# Deploy to Pi
-scp streamxr.tar.gz brad@100.120.77.39:~/streamxr/
-ssh brad@100.120.77.39 "cd ~/streamxr && \
-  docker stop streamxr && docker rm streamxr && \
-  docker load < streamxr.tar.gz && \
-  docker run -d --name streamxr --restart unless-stopped -p 3000:3000 streamxr:latest"
+# Copy to Mac Studio
+scp streamxr-deploy.tar.gz brad@100.81.45.56:/tmp/
+
+# Deploy to Lima VM
+ssh brad@100.81.45.56
+limactl copy /tmp/streamxr-deploy.tar.gz streamxr:/home/brad.linux/
+limactl shell streamxr
+cd ~/streamxr
+tar -xzf ~/streamxr-deploy.tar.gz
+find . -name "._*" -delete
+sudo docker compose down
+sudo docker compose up -d --build
+```
+
+**Direct SSH access via Tailscale:**
+```bash
+# SSH directly to Lima VM (no port forwarding needed)
+ssh brad@100.126.174.124
+
+# Or via Mac Studio
+ssh brad@100.81.45.56
+limactl shell streamxr
 ```
 
 ### Cloudflare Tunnel
 
-The tunnel is configured as a systemd service:
-```bash
-ssh brad@100.120.77.39 "sudo systemctl status cloudflared"
-```
+The tunnel runs on Mac Studio and routes to the Lima VM:
 
-Config at `/etc/cloudflared/config.yml`:
+Config at `/Users/brad/.cloudflared/config.yml`:
 ```yaml
-tunnel: 6f8253e9-d469-4cbc-8d13-13aca3cca104
-credentials-file: /etc/cloudflared/6f8253e9-d469-4cbc-8d13-13aca3cca104.json
+tunnel: d83cf254-dc78-4282-a739-5e383f4eb1fd
+credentials-file: /Users/brad/.cloudflared/d83cf254-dc78-4282-a739-5e383f4eb1fd.json
 
 ingress:
   - hostname: streamxr.brad-dougherty.com
+    service: http://100.126.174.124:3000
+  - hostname: streamxr-grafana.brad-dougherty.com
+    service: http://100.126.174.124:3003
+  - hostname: streamxr-prometheus.brad-dougherty.com
+    service: http://100.126.174.124:9092
+  - hostname: coder.brad-dougherty.com
     service: http://localhost:3000
+    originRequest:
+      noTLSVerify: true
   - service: http_status:404
+```
+
+**Restart tunnel:**
+```bash
+ssh brad@100.81.45.56
+# Kill old tunnel process
+pkill -f "cloudflared tunnel"
+# Start new tunnel
+/opt/homebrew/bin/cloudflared tunnel --config /Users/brad/.cloudflared/config.yml run &
 ```
 
 ## Performance
 
-Measured on Raspberry Pi 4:
-- **Asset streaming**: < 5ms per asset
+Measured on Mac Studio Lima VM (4 CPUs, 8GB RAM):
+- **Asset streaming**: < 2ms per asset
 - **Bandwidth detection**: 2-3 transfers for accuracy
-- **LOD switching**: 2-5 second response time
+- **LOD switching**: 1-2 second response time
 - **Memory per client**: ~100 bytes overhead
-- **Concurrent users**: Tested up to 10 users
+- **Concurrent users**: Tested up to 10 users simultaneously
+- **WebSocket stability**: 24-hour timeout via Nginx reverse proxy
 
 ## Troubleshooting
 

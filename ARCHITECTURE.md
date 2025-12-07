@@ -150,7 +150,7 @@ graph LR
 
     subgraph "Deployment"
         GitHub["GitHub<br/>Version control"]
-        RaspberryPi["Raspberry Pi<br/>Home server"]
+        MacStudio["Mac Studio<br/>Lima VM host"]
         CloudflareT["Cloudflare<br/>Tunnel"]
     end
 
@@ -165,8 +165,8 @@ graph LR
     Docker --> PromC
     Docker --> GrafanaC
     
-    GitHub --> RaspberryPi
-    RaspberryPi --> CloudflareT
+    GitHub --> MacStudio
+    MacStudio --> CloudflareT
 ```
 
 ## WebSocket Protocol
@@ -252,37 +252,46 @@ graph TB
         Git["🔀 GitHub<br/>potable-anarchy/streamxr"]
     end
 
-    subgraph "Production Server (Raspberry Pi)"
-        Server["🖥️ Raspberry Pi<br/>100.120.77.39<br/>/home/brad/streamxr"]
+    subgraph "Production Server (Mac Studio + Lima VM)"
+        MacStudio["🖥️ Mac Studio<br/>100.81.45.56<br/>Tailscale + Cloudflared"]
         
-        subgraph "Docker Containers"
-            C1["nginx:alpine<br/>streamxr-nginx<br/>Port 3000:80"]
-            C2["streamxr:latest<br/>streamxr<br/>Expose 3000"]
-            C3["prom/prometheus<br/>prometheus<br/>Port 9090:9090"]
-            C4["grafana/grafana<br/>grafana<br/>Port 3001:3000"]
+        subgraph "Lima VM (lima-streamxr)"
+            LimaVM["📦 Ubuntu 24.04 VM<br/>100.126.174.124<br/>4 CPUs, 8GB RAM"]
+            
+            subgraph "Docker Containers"
+                C1["nginx:alpine<br/>streamxr-nginx<br/>Port 3000:80"]
+                C2["streamxr:latest<br/>streamxr<br/>Expose 3000"]
+                C3["prom/prometheus<br/>prometheus<br/>Port 9092:9090"]
+                C4["grafana/grafana<br/>grafana<br/>Port 3003:3000"]
+            end
         end
     end
 
     subgraph "Public Access"
-        CF2["☁️ Cloudflare Tunnel<br/>streamxr.brad-dougherty.com"]
+        CF2["☁️ Cloudflare Tunnel<br/>streamxr.brad-dougherty.com<br/>streamxr-grafana.brad-dougherty.com<br/>streamxr-prometheus.brad-dougherty.com"]
     end
 
     Local -->|git push| Git
-    Git -->|git pull| Server
-    Server -->|docker compose up| C1
-    Server -->|docker compose up| C2
-    Server -->|docker compose up| C3
-    Server -->|docker compose up| C4
+    Git -->|tar + scp| MacStudio
+    MacStudio -->|limactl copy| LimaVM
+    LimaVM -->|docker compose up| C1
+    LimaVM -->|docker compose up| C2
+    LimaVM -->|docker compose up| C3
+    LimaVM -->|docker compose up| C4
     
     C1 -->|proxy| C2
     C2 -->|/metrics| C3
     C3 -->|datasource| C4
     
-    CF2 -->|localhost:3000| C1
+    CF2 -->|http://100.126.174.124:3000| C1
+    CF2 -->|http://100.126.174.124:3003| C4
+    CF2 -->|http://100.126.174.124:9092| C3
+    MacStudio -->|Cloudflare Tunnel| CF2
 
     style Local fill:#e1f5ff
     style Git fill:#333
-    style Server fill:#4caf50
+    style MacStudio fill:#4caf50
+    style LimaVM fill:#2196f3
     style CF2 fill:#f9a825
 ```
 
@@ -302,13 +311,14 @@ graph TB
 
 - ✅ **WebXR Support**: Vision Pro, Quest 3, Phone AR/VR
 - ✅ **Prometheus Metrics**: Real-time monitoring
-- ✅ **Grafana Dashboard**: Visual analytics
+- ✅ **Grafana Dashboard**: Visual analytics at streamxr-grafana.brad-dougherty.com
 - ✅ **Nginx Reverse Proxy**: 24-hour WebSocket stability
 - ✅ **Draco Compression**: Optimized 3D model transfer
 - ✅ **Multi-user Simulation**: test-multiuser.js for testing
+- ✅ **Lima VM Deployment**: Ubuntu 24.04 on Mac Studio with Tailscale
+- ✅ **Shared Object Manipulation**: Grab and move 3D objects in real-time
 - 📋 **Hand Tracking**: Vision Pro gestures (planned)
-- 📋 **Shared Object Manipulation**: Interactive 3D objects (planned)
 
 ---
 
-*Architecture diagram generated on 2025-12-06*
+*Architecture diagram updated on 2025-12-07*
