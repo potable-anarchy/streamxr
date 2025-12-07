@@ -56,9 +56,8 @@ let headTracking = {
   sendInterval: 100, // Send head position every 100ms
 };
 
-// Network stats overlay state
+// Network stats state
 let networkStats = {
-  visible: true, // Visible by default for demo
   updateInterval: 500, // Update every 500ms
   lastUpdateTime: 0,
   frameCount: 0,
@@ -1817,44 +1816,16 @@ function setupObjectSpawningUI() {
 // Network Stats Overlay Functions
 
 /**
- * Initialize the network stats overlay
+ * Initialize the network stats
  */
 function initNetworkStats() {
-  // Listen for 'S' key to toggle stats overlay
-  document.addEventListener("keydown", (e) => {
-    if (e.key.toLowerCase() === "s" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      // Don't toggle if user is typing in an input
-      if (
-        document.activeElement.tagName === "INPUT" ||
-        document.activeElement.tagName === "TEXTAREA"
-      ) {
-        return;
-      }
-      toggleNetworkStats();
-    }
-  });
-
   // Start the stats update loop
   setInterval(updateNetworkStatsDisplay, networkStats.updateInterval);
 
   // Start the ping loop for latency measurement
   setInterval(sendPing, networkStats.pingInterval);
 
-  console.log("Network stats overlay initialized (press 'S' to toggle)");
-}
-
-/**
- * Toggle visibility of the network stats overlay
- */
-function toggleNetworkStats() {
-  networkStats.visible = !networkStats.visible;
-  const overlay = document.getElementById("network-stats");
-  if (overlay) {
-    overlay.classList.toggle("visible", networkStats.visible);
-  }
-  console.log(
-    `Network stats overlay ${networkStats.visible ? "shown" : "hidden"}`,
-  );
+  console.log("Network stats initialized");
 }
 
 /**
@@ -1901,8 +1872,6 @@ function handlePong(data) {
  * Update the network stats display
  */
 function updateNetworkStatsDisplay() {
-  if (!networkStats.visible) return;
-
   // Update FPS display
   const fpsElement = document.getElementById("stats-fps");
   if (fpsElement) {
