@@ -481,6 +481,12 @@ function createAvatar(userId, color) {
     return;
   }
 
+  // AVATARS DISABLED - Uncomment below to re-enable
+  console.log("Avatar creation disabled - skipping user:", userId);
+  avatars.set(userId, null);
+  return;
+
+  /* DISABLED AVATAR CODE
   console.log("Creating avatar for user:", userId, "with color:", color);
 
   const avatarGroup = new THREE.Group();
@@ -517,7 +523,6 @@ function createAvatar(userId, color) {
   avatarGroup.add(body);
   avatarGroup.add(indicator);
 
-  // Add user ID label (optional, can be added with canvas texture)
   avatarGroup.userData.userId = userId;
   avatarGroup.userData.color = color;
 
@@ -525,6 +530,7 @@ function createAvatar(userId, color) {
   avatars.set(userId, avatarGroup);
 
   console.log("Avatar created and added to scene for user:", userId);
+  */
 }
 
 function removeAvatar(userId) {
@@ -538,6 +544,9 @@ function removeAvatar(userId) {
 }
 
 function updateAvatarPosition(userId, positionData) {
+  // Store position data
+  userPositions.set(userId, positionData);
+
   const avatar = avatars.get(userId);
   if (!avatar) {
     return;
@@ -565,8 +574,6 @@ function updateAvatarPosition(userId, positionData) {
       positionData.rotation[2],
     );
   }
-
-  userPositions.set(userId, positionData);
 }
 
 // Asset Streaming Functions
