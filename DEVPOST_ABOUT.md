@@ -1,5 +1,7 @@
 # About StreamXR
 
+**Dynamic LOD for WebXR**
+
 ## Inspiration
 
 Video streaming services like Netflix revolutionized how we consume 2D content - no massive downloads, instant playback on any device, quality that adapts to your connection. But for 3D and XR content? We're still stuck in the dark ages, forcing users to download gigabyte-sized files before experiencing anything.
