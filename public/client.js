@@ -289,7 +289,7 @@ function handleSignalingMessage(data) {
       }
 
       // Request an asset after connection (adaptive streaming will select LOD)
-      setTimeout(() => requestAsset("cube"), 1000);
+      setTimeout(() => requestAsset("helmet"), 1000);
 
       // Request existing objects in the room
       requestRoomObjects();
