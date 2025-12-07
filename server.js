@@ -196,6 +196,9 @@ wss.on("connection", (ws) => {
           data.position,
           data.rotation,
         );
+      } else if (data.type === "set-simulation-mode") {
+        // Handle bandwidth simulation toggle
+        handleSimulationModeToggle(clientId, ws, data.enabled);
       }
 
       // Track message latency (Golden Signal: Latency)
@@ -408,6 +411,34 @@ function handleBandwidthMetrics(clientId, metrics) {
         type: "lod-recommendation",
         lod: recommendedLOD,
       }),
+    );
+  }
+}
+
+function handleSimulationModeToggle(clientId, ws, enabled) {
+  console.log(`Client ${clientId} set simulation mode to: ${enabled}`);
+
+  // Update adaptive streaming manager
+  adaptiveStreaming.setSimulationMode(clientId, enabled);
+
+  // Send confirmation and LOD recommendation back to client
+  const recommendedLOD = enabled ? 'low' : adaptiveStreaming.getRecommendedLOD(clientId, {});
+
+  ws.send(
+    JSON.stringify({
+      type: "simulation-mode-changed",
+      enabled: enabled,
+      lod: recommendedLOD,
+    })
+  );
+
+  // If simulation is disabled, send an updated LOD recommendation
+  if (!enabled) {
+    ws.send(
+      JSON.stringify({
+        type: "lod-recommendation",
+        lod: recommendedLOD,
+      })
     );
   }
 }

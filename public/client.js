@@ -53,7 +53,15 @@ let bandwidthSimulation = {
 let headTracking = {
   enabled: false,
   lastSentTime: 0,
-  sendInterval: 100, // Send head position every 100ms
+  sendInterval: 100, // Send head position every 100ms (10 FPS)
+  normalInterval: 100, // Normal mode: 10 FPS
+  slowInterval: 200, // Slow mode: 5 FPS
+};
+
+// Bandwidth simulation state
+let simulationMode = {
+  enabled: false,
+  artificialLatency: 100, // 100ms artificial delay when enabled
 };
 
 // Network stats state
@@ -348,6 +356,10 @@ function handleSignalingMessage(data) {
 
     case "lod-recommendation":
       handleLODRecommendation(data.lod);
+      break;
+
+    case "simulation-mode-changed":
+      handleSimulationModeChanged(data.enabled, data.lod);
       break;
 
     case "room-objects":
@@ -873,17 +885,21 @@ function sendHeadTrackingData() {
     camera.quaternion.w,
   ];
 
-  // Send to server
-  ws.send(
-    JSON.stringify({
-      type: "head-tracking",
-      position: position,
-      rotation: rotation,
-      quaternion: quaternion,
-      fov: camera.fov,
-      timestamp: now,
-    }),
-  );
+  const trackingData = {
+    type: "head-tracking",
+    position: position,
+    rotation: rotation,
+    quaternion: quaternion,
+    fov: camera.fov,
+    timestamp: now,
+  };
+
+  // Use simulated latency wrapper if in simulation mode
+  if (simulationMode.enabled) {
+    sendWithSimulatedLatency(trackingData);
+  } else {
+    ws.send(JSON.stringify(trackingData));
+  }
 }
 
 /**
@@ -1845,6 +1861,50 @@ function updateFpsCounter() {
   }
 }
 
+// Bandwidth Simulation Functions
+
+/**
+ * Toggle bandwidth simulation mode
+ */
+function toggleSimulationMode() {
+  const newState = !simulationMode.enabled;
+
+  console.log(`Toggling simulation mode to: ${newState}`);
+
+  // Send to server
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(
+      JSON.stringify({
+        type: "set-simulation-mode",
+        enabled: newState,
+      })
+    );
+  }
+
+  // Update local state immediately for responsive UI
+  applySimulationMode(newState);
+}
+
+/**
+ * Handle simulation mode change confirmation from server
+ */
+function handleSimulationModeChanged(enabled, lod) {
+  console.log(`Server confirmed simulation mode: ${enabled}, LOD: ${lod}`);
+  applySimulationMode(enabled);
+
+  // If enabled and LOD is low, request asset reload with low LOD
+  if (enabled) {
+    // Force reload current asset with low LOD
+    const currentAsset = getCurrentAssetLOD();
+    if (currentAsset && currentAsset.base) {
+      // Add artificial latency before requesting new asset
+      setTimeout(() => {
+        requestAsset(currentAsset.base, 'low');
+      }, simulationMode.artificialLatency);
+    }
+  }
+}
+
 /**
  * Send a ping to measure latency
  */
@@ -1995,6 +2055,9 @@ function toggleBandwidthSimulation() {
     button.classList.add("low-bandwidth");
     console.log("Bandwidth simulation: ENABLED (forcing LOW LOD)");
 
+    // Also update head tracking frequency for more realistic simulation
+    headTracking.sendInterval = headTracking.slowInterval; // 5 FPS
+
     // Re-request current asset with low LOD
     const currentAsset = getCurrentAssetLOD();
     if (currentAsset && currentAsset.base) {
@@ -2007,6 +2070,9 @@ function toggleBandwidthSimulation() {
     button.textContent = "High Bandwidth";
     button.classList.remove("low-bandwidth");
     console.log("Bandwidth simulation: DISABLED (adaptive LOD)");
+
+    // Restore normal head tracking frequency
+    headTracking.sendInterval = headTracking.normalInterval; // 10 FPS
 
     // Re-request current asset with high LOD
     const currentAsset = getCurrentAssetLOD();
@@ -2034,6 +2100,95 @@ function updateLODIndicator() {
       lodIndicator.className =
         bandwidthMonitor.recommendedLOD === "high" ? "connected" : "pending";
     }
+  }
+}
+
+/**
+ * Apply simulation mode settings locally
+ */
+function applySimulationMode(enabled) {
+  simulationMode.enabled = enabled;
+
+  // Update head tracking frequency
+  if (enabled) {
+    headTracking.sendInterval = headTracking.slowInterval; // 5 FPS
+  } else {
+    headTracking.sendInterval = headTracking.normalInterval; // 10 FPS
+  }
+
+  // Update UI
+  updateSimulationUI(enabled);
+
+  // Update LOD indicator
+  updateLODIndicator();
+
+  console.log(`Simulation mode ${enabled ? 'enabled' : 'disabled'}, head tracking interval: ${headTracking.sendInterval}ms`);
+
+  // If turning off simulation, trigger progressive refinement
+  if (!enabled) {
+    triggerProgressiveRefinement();
+  }
+}
+
+/**
+ * Update simulation UI elements
+ */
+function updateSimulationUI(enabled) {
+  const toggleBtn = document.getElementById("simulation-toggle-btn");
+  const statusSpan = document.getElementById("simulation-status");
+
+  if (toggleBtn) {
+    if (enabled) {
+      toggleBtn.classList.add("active");
+    } else {
+      toggleBtn.classList.remove("active");
+    }
+  }
+
+  if (statusSpan) {
+    if (enabled) {
+      statusSpan.textContent = "Slow Network Mode";
+      statusSpan.className = "slow-mode";
+    } else {
+      statusSpan.textContent = "Normal Mode";
+      statusSpan.className = "normal-mode";
+    }
+  }
+}
+
+/**
+ * Trigger progressive refinement when returning to normal mode
+ */
+function triggerProgressiveRefinement() {
+  console.log("Triggering progressive refinement...");
+
+  // Request current asset with adaptive LOD selection (null = let server decide)
+  const currentAsset = getCurrentAssetLOD();
+  if (currentAsset && currentAsset.base) {
+    // Small delay for smooth transition
+    setTimeout(() => {
+      requestAsset(currentAsset.base, null); // null means use adaptive streaming
+    }, 500);
+  }
+}
+
+/**
+ * Wrapper for WebSocket send that adds artificial latency in simulation mode
+ */
+function sendWithSimulatedLatency(data) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const message = JSON.stringify(data);
+
+  if (simulationMode.enabled && data.type !== "set-simulation-mode") {
+    // Add artificial latency for non-toggle messages
+    setTimeout(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(message);
+      }
+    }, simulationMode.artificialLatency);
+  } else {
+    ws.send(message);
   }
 }
 
