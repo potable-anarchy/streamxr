@@ -95,8 +95,13 @@ function initThreeJS() {
   renderer.setSize(window.innerWidth, window.innerHeight);
   container.appendChild(renderer.domElement);
 
-  // Initialize GLTFLoader
+  // Initialize DRACOLoader
+  const dracoLoader = new THREE.DRACOLoader();
+  dracoLoader.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/");
+
+  // Initialize GLTFLoader with DRACO support
   gltfLoader = new THREE.GLTFLoader();
+  gltfLoader.setDRACOLoader(dracoLoader);
 
   const geometry = new THREE.BoxGeometry(2, 2, 2);
   const material = new THREE.MeshStandardMaterial({
@@ -1391,76 +1396,6 @@ let handInputSources = new Map();
 let grabbedObject = null;
 let grabbingHand = null;
 let handIndicators = new Map();
-let handModels = new Map(); // Controller -> hand model group
-let handJointMeshes = new Map(); // Controller -> Map of joint meshes
-let handPinchState = new Map(); // Controller -> boolean (is pinching)
-
-// WebXR hand joint names in order
-const XR_HAND_JOINTS = [
-  "wrist",
-  "thumb-metacarpal",
-  "thumb-phalanx-proximal",
-  "thumb-phalanx-distal",
-  "thumb-tip",
-  "index-finger-metacarpal",
-  "index-finger-phalanx-proximal",
-  "index-finger-phalanx-intermediate",
-  "index-finger-phalanx-distal",
-  "index-finger-tip",
-  "middle-finger-metacarpal",
-  "middle-finger-phalanx-proximal",
-  "middle-finger-phalanx-intermediate",
-  "middle-finger-phalanx-distal",
-  "middle-finger-tip",
-  "ring-finger-metacarpal",
-  "ring-finger-phalanx-proximal",
-  "ring-finger-phalanx-intermediate",
-  "ring-finger-phalanx-distal",
-  "ring-finger-tip",
-  "pinky-finger-metacarpal",
-  "pinky-finger-phalanx-proximal",
-  "pinky-finger-phalanx-intermediate",
-  "pinky-finger-phalanx-distal",
-  "pinky-finger-tip",
-];
-
-// Hand bone connections for visual skeleton
-const HAND_BONES = [
-  // Thumb
-  ["wrist", "thumb-metacarpal"],
-  ["thumb-metacarpal", "thumb-phalanx-proximal"],
-  ["thumb-phalanx-proximal", "thumb-phalanx-distal"],
-  ["thumb-phalanx-distal", "thumb-tip"],
-  // Index
-  ["wrist", "index-finger-metacarpal"],
-  ["index-finger-metacarpal", "index-finger-phalanx-proximal"],
-  ["index-finger-phalanx-proximal", "index-finger-phalanx-intermediate"],
-  ["index-finger-phalanx-intermediate", "index-finger-phalanx-distal"],
-  ["index-finger-phalanx-distal", "index-finger-tip"],
-  // Middle
-  ["wrist", "middle-finger-metacarpal"],
-  ["middle-finger-metacarpal", "middle-finger-phalanx-proximal"],
-  ["middle-finger-phalanx-proximal", "middle-finger-phalanx-intermediate"],
-  ["middle-finger-phalanx-intermediate", "middle-finger-phalanx-distal"],
-  ["middle-finger-phalanx-distal", "middle-finger-tip"],
-  // Ring
-  ["wrist", "ring-finger-metacarpal"],
-  ["ring-finger-metacarpal", "ring-finger-phalanx-proximal"],
-  ["ring-finger-phalanx-proximal", "ring-finger-phalanx-intermediate"],
-  ["ring-finger-phalanx-intermediate", "ring-finger-phalanx-distal"],
-  ["ring-finger-phalanx-distal", "ring-finger-tip"],
-  // Pinky
-  ["wrist", "pinky-finger-metacarpal"],
-  ["pinky-finger-metacarpal", "pinky-finger-phalanx-proximal"],
-  ["pinky-finger-phalanx-proximal", "pinky-finger-phalanx-intermediate"],
-  ["pinky-finger-phalanx-intermediate", "pinky-finger-phalanx-distal"],
-  ["pinky-finger-phalanx-distal", "pinky-finger-tip"],
-];
-
-// Hand colors
-const HAND_COLOR_DEFAULT = 0xffffff; // White
-const HAND_COLOR_PINCHING = 0x00ff00; // Green
-const PINCH_THRESHOLD = 0.02; // 2cm threshold for pinch detection
 
 /**
  * Setup XR controllers for object spawning and hand tracking
@@ -1533,78 +1468,30 @@ function onControllerDisconnected(event) {
 }
 
 /**
- * Create 3D hand model with joints and bones
+ * Create visual indicator for hand position
  */
 function createHandIndicator(controller, handedness) {
-  // Create a group to hold all hand geometry
-  const handGroup = new THREE.Group();
-  handGroup.name = `hand-${handedness}`;
-  scene.add(handGroup);
-  handModels.set(controller, handGroup);
-
-  // Create material for hand (starts white)
-  const handMaterial = new THREE.MeshStandardMaterial({
-    color: HAND_COLOR_DEFAULT,
-    emissive: HAND_COLOR_DEFAULT,
-    emissiveIntensity: 0.3,
+  // Create a small sphere to represent hand position
+  const geometry = new THREE.SphereGeometry(0.05, 16, 16);
+  const material = new THREE.MeshStandardMaterial({
+    color: handedness === "left" ? 0x00ffff : 0xff00ff,
+    emissive: handedness === "left" ? 0x00ffff : 0xff00ff,
+    emissiveIntensity: 0.5,
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.7,
   });
 
-  // Store material reference for color changes
-  handGroup.userData.material = handMaterial;
-  handGroup.userData.handedness = handedness;
+  const indicator = new THREE.Mesh(geometry, material);
+  controller.add(indicator);
+  handIndicators.set(controller, indicator);
 
-  // Create joint spheres
-  const jointMeshes = new Map();
-  const jointGeometry = new THREE.SphereGeometry(0.008, 8, 8);
-
-  for (const jointName of XR_HAND_JOINTS) {
-    const jointMesh = new THREE.Mesh(jointGeometry, handMaterial.clone());
-    jointMesh.name = jointName;
-    jointMesh.visible = false; // Will be shown when tracking data is available
-    handGroup.add(jointMesh);
-    jointMeshes.set(jointName, jointMesh);
-  }
-
-  handJointMeshes.set(controller, jointMeshes);
-
-  // Create bone cylinders connecting joints
-  const boneGeometry = new THREE.CylinderGeometry(0.004, 0.004, 1, 6);
-  boneGeometry.translate(0, 0.5, 0);
-  boneGeometry.rotateX(Math.PI / 2);
-
-  const bones = [];
-  for (const [startJoint, endJoint] of HAND_BONES) {
-    const boneMesh = new THREE.Mesh(boneGeometry, handMaterial.clone());
-    boneMesh.name = `bone-${startJoint}-${endJoint}`;
-    boneMesh.userData.startJoint = startJoint;
-    boneMesh.userData.endJoint = endJoint;
-    boneMesh.visible = false;
-    handGroup.add(boneMesh);
-    bones.push(boneMesh);
-  }
-
-  handGroup.userData.bones = bones;
-
-  // Initialize pinch state
-  handPinchState.set(controller, false);
-
-  // Also create a simple fallback indicator for when joint data isn't available
-  const fallbackGeometry = new THREE.SphereGeometry(0.03, 16, 16);
-  const fallbackIndicator = new THREE.Mesh(fallbackGeometry, handMaterial.clone());
-  fallbackIndicator.name = "fallback-indicator";
-  controller.add(fallbackIndicator);
-  handIndicators.set(controller, fallbackIndicator);
-
-  console.log(`Hand model created for ${handedness} hand with ${XR_HAND_JOINTS.length} joints`);
+  console.log(`Hand indicator created for ${handedness} hand`);
 }
 
 /**
- * Remove hand model and all associated geometry
+ * Remove hand indicator
  */
 function removeHandIndicator(controller) {
-  // Remove fallback indicator
   const indicator = handIndicators.get(controller);
   if (indicator) {
     controller.remove(indicator);
@@ -1612,186 +1499,31 @@ function removeHandIndicator(controller) {
     indicator.material.dispose();
     handIndicators.delete(controller);
   }
-
-  // Remove hand model group
-  const handGroup = handModels.get(controller);
-  if (handGroup) {
-    // Dispose all children
-    handGroup.traverse((child) => {
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) child.material.dispose();
-    });
-    scene.remove(handGroup);
-    handModels.delete(controller);
-  }
-
-  // Clear joint meshes map
-  handJointMeshes.delete(controller);
-
-  // Clear pinch state
-  handPinchState.delete(controller);
 }
 
 /**
- * Update hand models with joint positions from WebXR and detect pinch gestures
+ * Update hand indicators based on proximity to grabbable objects
  */
 function updateHandIndicators() {
-  const xrFrame = renderer.xr.getFrame();
-  const referenceSpace = renderer.xr.getReferenceSpace();
-
-  // Update each hand's joint positions and check for pinch
-  handInputSources.forEach((inputSource, controller) => {
-    const hand = inputSource.hand;
-    if (!hand || !xrFrame || !referenceSpace) {
-      // No hand tracking data available, show fallback indicator
-      const indicator = handIndicators.get(controller);
-      if (indicator) indicator.visible = true;
-      return;
-    }
-
-    // Hide fallback indicator when we have joint data
-    const indicator = handIndicators.get(controller);
-    if (indicator) indicator.visible = false;
-
-    const jointMeshes = handJointMeshes.get(controller);
-    const handGroup = handModels.get(controller);
-
-    if (!jointMeshes || !handGroup) return;
-
-    // Update joint positions
-    let hasValidJoints = false;
-    const jointPositions = new Map();
-
-    for (const jointName of XR_HAND_JOINTS) {
-      const joint = hand.get(jointName);
-      if (!joint) continue;
-
-      const jointPose = xrFrame.getJointPose(joint, referenceSpace);
-      if (jointPose) {
-        hasValidJoints = true;
-        const jointMesh = jointMeshes.get(jointName);
-        if (jointMesh) {
-          jointMesh.visible = true;
-          jointMesh.position.set(
-            jointPose.transform.position.x,
-            jointPose.transform.position.y,
-            jointPose.transform.position.z
-          );
-          jointMesh.quaternion.set(
-            jointPose.transform.orientation.x,
-            jointPose.transform.orientation.y,
-            jointPose.transform.orientation.z,
-            jointPose.transform.orientation.w
-          );
-
-          // Store position for bone updates
-          jointPositions.set(jointName, jointMesh.position.clone());
-        }
-      }
-    }
-
-    // Update bone positions and orientations
-    if (hasValidJoints && handGroup.userData.bones) {
-      for (const boneMesh of handGroup.userData.bones) {
-        const startPos = jointPositions.get(boneMesh.userData.startJoint);
-        const endPos = jointPositions.get(boneMesh.userData.endJoint);
-
-        if (startPos && endPos) {
-          boneMesh.visible = true;
-
-          // Position at start joint
-          boneMesh.position.copy(startPos);
-
-          // Point towards end joint
-          const direction = new THREE.Vector3().subVectors(endPos, startPos);
-          const length = direction.length();
-          boneMesh.scale.set(1, 1, length);
-          boneMesh.lookAt(endPos);
-        }
-      }
-    }
-
-    // Detect pinch gesture (thumb tip to index tip distance)
-    const thumbTipPos = jointPositions.get("thumb-tip");
-    const indexTipPos = jointPositions.get("index-finger-tip");
-
-    if (thumbTipPos && indexTipPos) {
-      const pinchDistance = thumbTipPos.distanceTo(indexTipPos);
-      const isPinching = pinchDistance < PINCH_THRESHOLD;
-      const wasPinching = handPinchState.get(controller);
-
-      // Update pinch state
-      handPinchState.set(controller, isPinching);
-
-      // Update hand color based on pinch state
-      updateHandColor(controller, isPinching);
-
-      // Log pinch state changes for debugging
-      if (isPinching !== wasPinching) {
-        console.log(
-          `${handGroup.userData.handedness} hand ${isPinching ? "PINCHING" : "RELEASED"} (distance: ${pinchDistance.toFixed(4)}m)`
-        );
-      }
-    }
-  });
-
-  // Update object highlighting based on proximity
-  updateObjectHighlighting();
-}
-
-/**
- * Update the color of a hand model based on pinch state
- */
-function updateHandColor(controller, isPinching) {
-  const handGroup = handModels.get(controller);
-  const jointMeshes = handJointMeshes.get(controller);
-  const indicator = handIndicators.get(controller);
-
-  if (!handGroup) return;
-
-  const targetColor = isPinching ? HAND_COLOR_PINCHING : HAND_COLOR_DEFAULT;
-
-  // Update all joint materials
-  if (jointMeshes) {
-    jointMeshes.forEach((jointMesh) => {
-      jointMesh.material.color.setHex(targetColor);
-      jointMesh.material.emissive.setHex(targetColor);
-      jointMesh.material.emissiveIntensity = isPinching ? 0.6 : 0.3;
-    });
-  }
-
-  // Update all bone materials
-  if (handGroup.userData.bones) {
-    for (const boneMesh of handGroup.userData.bones) {
-      boneMesh.material.color.setHex(targetColor);
-      boneMesh.material.emissive.setHex(targetColor);
-      boneMesh.material.emissiveIntensity = isPinching ? 0.6 : 0.3;
-    }
-  }
-
-  // Update fallback indicator as well
-  if (indicator) {
-    indicator.material.color.setHex(targetColor);
-    indicator.material.emissive.setHex(targetColor);
-    indicator.material.emissiveIntensity = isPinching ? 0.6 : 0.3;
-  }
-}
-
-/**
- * Update object highlighting based on hand proximity
- */
-function updateObjectHighlighting() {
   handIndicators.forEach((indicator, controller) => {
     const nearbyObject = getNearbyGrabbableObject(controller);
 
     if (nearbyObject && !grabbedObject) {
-      // Also highlight the object when hand is near
+      // Highlight when near grabbable object
+      indicator.material.emissiveIntensity = 1.0;
+      indicator.scale.set(1.5, 1.5, 1.5);
+
+      // Also highlight the object
       if (nearbyObject.userData.originalColor === undefined) {
         nearbyObject.userData.originalColor =
           nearbyObject.material.color.getHex();
       }
       nearbyObject.material.emissive.setHex(0xffff00);
       nearbyObject.material.emissiveIntensity = 0.3;
+    } else {
+      // Reset to normal
+      indicator.material.emissiveIntensity = 0.5;
+      indicator.scale.set(1, 1, 1);
     }
   });
 
