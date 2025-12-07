@@ -23,7 +23,7 @@ services:
     environment:
       - NODE_ENV=production
     volumes:
-      - ./public/models:/app/public/models:ro
+      - ./public:/app/public:ro
     networks:
       - monitoring
 
