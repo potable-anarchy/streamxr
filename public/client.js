@@ -58,7 +58,7 @@ let headTracking = {
 
 // Network stats overlay state
 let networkStats = {
-  visible: false,
+  visible: true, // Visible by default for demo
   updateInterval: 500, // Update every 500ms
   lastUpdateTime: 0,
   frameCount: 0,
