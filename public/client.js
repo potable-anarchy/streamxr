@@ -1052,13 +1052,6 @@ async function enterVR(mode = "immersive-vr") {
 }
 
 /**
- * Legacy function for backward compatibility
- */
-async function enterVR() {
-  return enterXR("immersive-vr");
-}
-
-/**
  * Enable basic camera controls for testing head tracking without VR
  */
 function enableCameraControls() {
