@@ -129,11 +129,11 @@ function animate() {
   // Update FPS counter for network stats
   updateFpsCounter();
 
-  if (cube && !grabbedObject) {
-    // Only rotate cube when not being grabbed
-    cube.rotation.x += 0.01;
-    cube.rotation.y += 0.01;
-  }
+  // Model rotation disabled - model is now static
+  // if (cube && !grabbedObject) {
+  //   cube.rotation.x += 0.01;
+  //   cube.rotation.y += 0.01;
+  // }
 
   // Send head tracking data periodically
   sendHeadTrackingData();
