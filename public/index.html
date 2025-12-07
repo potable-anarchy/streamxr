@@ -173,8 +173,12 @@
 
         <!-- Bandwidth Simulation Toggle Button -->
         <div id="bandwidth-toggle">
-            <button id="bandwidth-btn" onclick="toggleBandwidthSimulation()">
-                High Bandwidth
+            <button
+                id="bandwidth-btn"
+                class="low-bandwidth"
+                onclick="toggleBandwidthSimulation()"
+            >
+                Low Bandwidth (Simulated)
             </button>
         </div>
 
@@ -248,6 +252,6 @@
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/simple-peer@9.11.1/simplepeer.min.js"></script>
-        <script src="client.js?v=4"></script>
+        <script src="client.js?v=5"></script>
     </body>
 </html>

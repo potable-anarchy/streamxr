@@ -45,8 +45,8 @@ let bandwidthMonitor = {
 
 // Bandwidth simulation state
 let bandwidthSimulation = {
-  enabled: false, // false = high bandwidth, true = low bandwidth simulation
-  forcedLOD: null, // null = use adaptive, "low"/"high" = force specific LOD
+  enabled: true, // Start in LOW bandwidth mode by default
+  forcedLOD: "low", // Force LOW LOD on startup
 };
 
 // Head tracking state
