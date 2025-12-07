@@ -739,21 +739,6 @@ function loadGLBModel(url, assetId, lod) {
       model.userData.assetId = assetId;
       model.userData.lod = lod;
 
-      // Add a material to the model since GLB doesn't have one
-      model.traverse((child) => {
-        if (child.isMesh) {
-          child.material = new THREE.MeshStandardMaterial({
-            color: 0x3498db, // Blue color
-            roughness: 0.5,
-            metalness: 0.3,
-          });
-        }
-      });
-
-      // Store metadata for adaptive streaming
-      model.userData.assetId = assetId;
-      model.userData.lod = lod;
-
       scene.add(model);
 
       // Store reference for animation
@@ -1877,7 +1862,7 @@ function toggleSimulationMode() {
       JSON.stringify({
         type: "set-simulation-mode",
         enabled: newState,
-      })
+      }),
     );
   }
 
@@ -1899,7 +1884,7 @@ function handleSimulationModeChanged(enabled, lod) {
     if (currentAsset && currentAsset.base) {
       // Add artificial latency before requesting new asset
       setTimeout(() => {
-        requestAsset(currentAsset.base, 'low');
+        requestAsset(currentAsset.base, "low");
       }, simulationMode.artificialLatency);
     }
   }
@@ -2122,7 +2107,9 @@ function applySimulationMode(enabled) {
   // Update LOD indicator
   updateLODIndicator();
 
-  console.log(`Simulation mode ${enabled ? 'enabled' : 'disabled'}, head tracking interval: ${headTracking.sendInterval}ms`);
+  console.log(
+    `Simulation mode ${enabled ? "enabled" : "disabled"}, head tracking interval: ${headTracking.sendInterval}ms`,
+  );
 
   // If turning off simulation, trigger progressive refinement
   if (!enabled) {
