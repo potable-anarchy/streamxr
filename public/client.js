@@ -43,6 +43,12 @@ let bandwidthMonitor = {
   recommendedLOD: "low",
 };
 
+// Bandwidth simulation state
+let bandwidthSimulation = {
+  enabled: false, // false = high bandwidth, true = low bandwidth simulation
+  forcedLOD: null, // null = use adaptive, "low"/"high" = force specific LOD
+};
+
 // Head tracking state
 let headTracking = {
   enabled: false,
@@ -554,6 +560,13 @@ function requestAsset(assetId, lod = null) {
     console.error("requestAsset called with undefined assetId");
     return;
   }
+
+  // Override LOD if bandwidth simulation is enabled
+  if (bandwidthSimulation.enabled && bandwidthSimulation.forcedLOD) {
+    lod = bandwidthSimulation.forcedLOD;
+    console.log(`Bandwidth simulation active - forcing LOD: ${lod}`);
+  }
+
   console.log("Requesting asset:", assetId, lod ? `LOD: ${lod}` : "(adaptive)");
   ws.send(
     JSON.stringify({
@@ -797,11 +810,15 @@ function handleLODRecommendation(lod) {
   console.log(`Server recommends LOD: ${lod}`);
   bandwidthMonitor.recommendedLOD = lod;
 
-  // Update UI to show current LOD
-  const lodIndicator = document.getElementById("lod-indicator");
-  if (lodIndicator) {
-    lodIndicator.textContent = lod.toUpperCase();
-    lodIndicator.className = lod === "high" ? "connected" : "pending";
+  // Update UI to show current LOD (unless simulation is active)
+  updateLODIndicator();
+
+  // Don't auto-switch LOD if bandwidth simulation is active
+  if (bandwidthSimulation.enabled) {
+    console.log(
+      "Bandwidth simulation active - ignoring server LOD recommendation",
+    );
+    return;
   }
 
   // Auto-request new asset if LOD changed significantly
@@ -988,7 +1005,11 @@ async function enterVR(mode = "immersive-vr") {
     session.addEventListener("inputsourceschange", (event) => {
       console.log("Input sources changed");
       event.added.forEach((source) => {
-        console.log("New input source:", source.handedness, source.targetRayMode);
+        console.log(
+          "New input source:",
+          source.handedness,
+          source.targetRayMode,
+        );
         if (source.hand) {
           console.log("Hand tracking available for:", source.handedness);
         }
@@ -1408,7 +1429,11 @@ function onControllerConnected(event) {
   const controller = event.target;
   const inputSource = event.data;
 
-  console.log("Controller connected:", inputSource.handedness, inputSource.targetRayMode);
+  console.log(
+    "Controller connected:",
+    inputSource.handedness,
+    inputSource.targetRayMode,
+  );
 
   // Check if this is a hand input source
   if (inputSource.hand) {
@@ -1485,7 +1510,8 @@ function updateHandIndicators() {
 
       // Also highlight the object
       if (nearbyObject.userData.originalColor === undefined) {
-        nearbyObject.userData.originalColor = nearbyObject.material.color.getHex();
+        nearbyObject.userData.originalColor =
+          nearbyObject.material.color.getHex();
       }
       nearbyObject.material.emissive.setHex(0xffff00);
       nearbyObject.material.emissiveIntensity = 0.3;
@@ -1590,7 +1616,10 @@ function onSelectStart(event) {
       const objectId = targetMesh.userData.objectId;
 
       // Check if object is already owned by someone else
-      if (targetMesh.userData.ownedBy && targetMesh.userData.ownedBy !== clientId) {
+      if (
+        targetMesh.userData.ownedBy &&
+        targetMesh.userData.ownedBy !== clientId
+      ) {
         console.log("Object is already grabbed by another user");
         return;
       }
@@ -1601,7 +1630,7 @@ function onSelectStart(event) {
           type: "grab-object",
           roomId: roomId,
           objectId: objectId,
-        })
+        }),
       );
 
       // Store grabbed object locally
@@ -1638,7 +1667,7 @@ function onSelectEnd(event) {
           type: "release-object",
           roomId: roomId,
           objectId: grabbedObject.objectId,
-        })
+        }),
       );
       console.log(`Released object ${grabbedObject.objectId}`);
       grabbedObject = null;
@@ -1674,7 +1703,10 @@ function handleHandGrab(controller) {
     nearbyObject.material.emissive.setHex(0x00ff00);
     nearbyObject.material.emissiveIntensity = 0.5;
 
-    console.log("Grabbed object:", nearbyObject.userData.objectId || "main cube");
+    console.log(
+      "Grabbed object:",
+      nearbyObject.userData.objectId || "main cube",
+    );
   }
 }
 
@@ -1690,7 +1722,10 @@ function releaseGrabbedObject() {
     grabbedObject.material.emissiveIntensity = 0;
   }
 
-  console.log("Released object:", grabbedObject.userData.objectId || "main cube");
+  console.log(
+    "Released object:",
+    grabbedObject.userData.objectId || "main cube",
+  );
 
   // Sync position to server if it's a shared object
   if (grabbedObject.userData.objectId) {
@@ -1699,7 +1734,7 @@ function releaseGrabbedObject() {
     updateObjectPosition(
       grabbedObject.userData.objectId,
       [pos.x, pos.y, pos.z],
-      [rot.x, rot.y, rot.z]
+      [rot.x, rot.y, rot.z],
     );
   }
 
@@ -1789,7 +1824,10 @@ function initNetworkStats() {
   document.addEventListener("keydown", (e) => {
     if (e.key.toLowerCase() === "s" && !e.ctrlKey && !e.metaKey && !e.altKey) {
       // Don't toggle if user is typing in an input
-      if (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA") {
+      if (
+        document.activeElement.tagName === "INPUT" ||
+        document.activeElement.tagName === "TEXTAREA"
+      ) {
         return;
       }
       toggleNetworkStats();
@@ -1814,7 +1852,9 @@ function toggleNetworkStats() {
   if (overlay) {
     overlay.classList.toggle("visible", networkStats.visible);
   }
-  console.log(`Network stats overlay ${networkStats.visible ? "shown" : "hidden"}`);
+  console.log(
+    `Network stats overlay ${networkStats.visible ? "shown" : "hidden"}`,
+  );
 }
 
 /**
@@ -1826,7 +1866,9 @@ function updateFpsCounter() {
 
   // Calculate FPS every second
   if (now - networkStats.lastFpsTime >= 1000) {
-    networkStats.fps = Math.round(networkStats.frameCount * 1000 / (now - networkStats.lastFpsTime));
+    networkStats.fps = Math.round(
+      (networkStats.frameCount * 1000) / (now - networkStats.lastFpsTime),
+    );
     networkStats.frameCount = 0;
     networkStats.lastFpsTime = now;
   }
@@ -1839,10 +1881,12 @@ function sendPing() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
   networkStats.lastPingTime = performance.now();
-  ws.send(JSON.stringify({
-    type: "ping",
-    timestamp: networkStats.lastPingTime,
-  }));
+  ws.send(
+    JSON.stringify({
+      type: "ping",
+      timestamp: networkStats.lastPingTime,
+    }),
+  );
 }
 
 /**
@@ -1871,14 +1915,17 @@ function updateNetworkStatsDisplay() {
   if (bandwidthElement) {
     const bandwidthKBs = (bandwidthMonitor.currentBandwidth / 1024).toFixed(1);
     bandwidthElement.textContent = `${bandwidthKBs} KB/s`;
-    bandwidthElement.className = "stat-value " + getBandwidthStatusClass(bandwidthMonitor.currentBandwidth);
+    bandwidthElement.className =
+      "stat-value " +
+      getBandwidthStatusClass(bandwidthMonitor.currentBandwidth);
   }
 
   // Update latency display
   const latencyElement = document.getElementById("stats-latency");
   if (latencyElement) {
     latencyElement.textContent = `${networkStats.latency} ms`;
-    latencyElement.className = "stat-value " + getLatencyStatusClass(networkStats.latency);
+    latencyElement.className =
+      "stat-value " + getLatencyStatusClass(networkStats.latency);
   }
 
   // Update LOD level display
@@ -1892,15 +1939,19 @@ function updateNetworkStatsDisplay() {
   // Update connections display
   const connectionsElement = document.getElementById("stats-connections");
   if (connectionsElement) {
-    const connectionCount = peers.size + (ws && ws.readyState === WebSocket.OPEN ? 1 : 0);
+    const connectionCount =
+      peers.size + (ws && ws.readyState === WebSocket.OPEN ? 1 : 0);
     connectionsElement.textContent = connectionCount;
-    connectionsElement.className = "stat-value " + getConnectionStatusClass(connectionCount);
+    connectionsElement.className =
+      "stat-value " + getConnectionStatusClass(connectionCount);
   }
 
   // Update data transferred display
   const dataElement = document.getElementById("stats-data");
   if (dataElement) {
-    const dataMB = (networkStats.totalDataTransferred / (1024 * 1024)).toFixed(2);
+    const dataMB = (networkStats.totalDataTransferred / (1024 * 1024)).toFixed(
+      2,
+    );
     dataElement.textContent = `${dataMB} MB`;
   }
 }
@@ -1957,6 +2008,64 @@ function getLodStatusClass(lod) {
 function getConnectionStatusClass(count) {
   if (count > 0) return "stat-good";
   return "stat-critical";
+}
+
+/**
+ * Toggle bandwidth simulation (demo feature)
+ * Switches between high bandwidth (adaptive LOD) and low bandwidth (forced low LOD)
+ */
+function toggleBandwidthSimulation() {
+  bandwidthSimulation.enabled = !bandwidthSimulation.enabled;
+
+  const button = document.getElementById("bandwidth-btn");
+
+  if (bandwidthSimulation.enabled) {
+    // Enable low bandwidth simulation
+    bandwidthSimulation.forcedLOD = "low";
+    button.textContent = "Low Bandwidth (Simulated)";
+    button.classList.add("low-bandwidth");
+    console.log("Bandwidth simulation: ENABLED (forcing LOW LOD)");
+
+    // Re-request current asset with low LOD
+    const currentAsset = getCurrentAssetLOD();
+    if (currentAsset && currentAsset.base) {
+      console.log(`Re-requesting ${currentAsset.base} with LOW LOD`);
+      setTimeout(() => requestAsset(currentAsset.base, "low"), 500);
+    }
+  } else {
+    // Disable simulation, return to high bandwidth
+    bandwidthSimulation.forcedLOD = null;
+    button.textContent = "High Bandwidth";
+    button.classList.remove("low-bandwidth");
+    console.log("Bandwidth simulation: DISABLED (adaptive LOD)");
+
+    // Re-request current asset with high LOD
+    const currentAsset = getCurrentAssetLOD();
+    if (currentAsset && currentAsset.base) {
+      console.log(`Re-requesting ${currentAsset.base} with HIGH LOD`);
+      setTimeout(() => requestAsset(currentAsset.base, "high"), 500);
+    }
+  }
+
+  // Update LOD indicator in UI
+  updateLODIndicator();
+}
+
+/**
+ * Update LOD indicator based on current simulation state
+ */
+function updateLODIndicator() {
+  const lodIndicator = document.getElementById("lod-indicator");
+  if (lodIndicator) {
+    if (bandwidthSimulation.enabled) {
+      lodIndicator.textContent = "LOW (SIMULATED)";
+      lodIndicator.className = "pending";
+    } else {
+      lodIndicator.textContent = bandwidthMonitor.recommendedLOD.toUpperCase();
+      lodIndicator.className =
+        bandwidthMonitor.recommendedLOD === "high" ? "connected" : "pending";
+    }
+  }
 }
 
 initThreeJS();
