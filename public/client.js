@@ -2027,7 +2027,7 @@ function updateLODIndicator() {
   const lodIndicator = document.getElementById("lod-indicator");
   if (lodIndicator) {
     if (bandwidthSimulation.enabled) {
-      lodIndicator.textContent = "LOW (SIMULATED)";
+      lodIndicator.textContent = "LOW";
       lodIndicator.className = "pending";
     } else {
       lodIndicator.textContent = bandwidthMonitor.recommendedLOD.toUpperCase();
