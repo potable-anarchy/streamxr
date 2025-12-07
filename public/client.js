@@ -50,6 +50,20 @@ let headTracking = {
   sendInterval: 100, // Send head position every 100ms
 };
 
+// Network stats overlay state
+let networkStats = {
+  visible: false,
+  updateInterval: 500, // Update every 500ms
+  lastUpdateTime: 0,
+  frameCount: 0,
+  lastFpsTime: 0,
+  fps: 0,
+  latency: 0,
+  lastPingTime: 0,
+  pingInterval: 2000, // Ping server every 2 seconds
+  totalDataTransferred: 0, // Total bytes transferred
+};
+
 function initThreeJS() {
   const container = document.getElementById("canvas-container");
 
@@ -94,6 +108,9 @@ function initThreeJS() {
 }
 
 function animate() {
+  // Update FPS counter for network stats
+  updateFpsCounter();
+
   if (cube && !grabbedObject) {
     // Only rotate cube when not being grabbed
     cube.rotation.x += 0.01;
@@ -344,6 +361,10 @@ function handleSignalingMessage(data) {
       handleObjectDeleted(data.objectId);
       break;
 
+    case "pong":
+      handlePong(data);
+      break;
+
     default:
       console.warn("Unknown message type:", data.type);
   }
@@ -408,9 +429,11 @@ function handleBinaryData(data) {
     const view = new Uint8Array(data);
     console.log("Received binary data (ArrayBuffer):", view);
     updateStatus("binary-status", "Received", "connected");
+    trackDataReceived(data.byteLength);
   } else if (data instanceof Uint8Array) {
     console.log("Received binary data (Uint8Array):", data);
     updateStatus("binary-status", "Received", "connected");
+    trackDataReceived(data.length);
   } else {
     console.log("Received data:", data);
   }
@@ -614,6 +637,9 @@ function handleAssetChunkData(arrayBuffer) {
   // Update bandwidth monitoring
   bandwidthMonitor.bytesReceived += chunkData.length;
   updateBandwidthMetrics();
+
+  // Track total data for stats overlay
+  trackDataReceived(chunkData.length);
 
   console.log(
     `Received chunk ${targetStream.receivedChunks}/${targetStream.totalChunks} for ${targetAssetId} (${chunkData.length} bytes)`,
@@ -1753,9 +1779,190 @@ function setupObjectSpawningUI() {
   }, 1000);
 }
 
+// Network Stats Overlay Functions
+
+/**
+ * Initialize the network stats overlay
+ */
+function initNetworkStats() {
+  // Listen for 'S' key to toggle stats overlay
+  document.addEventListener("keydown", (e) => {
+    if (e.key.toLowerCase() === "s" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // Don't toggle if user is typing in an input
+      if (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA") {
+        return;
+      }
+      toggleNetworkStats();
+    }
+  });
+
+  // Start the stats update loop
+  setInterval(updateNetworkStatsDisplay, networkStats.updateInterval);
+
+  // Start the ping loop for latency measurement
+  setInterval(sendPing, networkStats.pingInterval);
+
+  console.log("Network stats overlay initialized (press 'S' to toggle)");
+}
+
+/**
+ * Toggle visibility of the network stats overlay
+ */
+function toggleNetworkStats() {
+  networkStats.visible = !networkStats.visible;
+  const overlay = document.getElementById("network-stats");
+  if (overlay) {
+    overlay.classList.toggle("visible", networkStats.visible);
+  }
+  console.log(`Network stats overlay ${networkStats.visible ? "shown" : "hidden"}`);
+}
+
+/**
+ * Update FPS counter - called every frame from animate()
+ */
+function updateFpsCounter() {
+  networkStats.frameCount++;
+  const now = performance.now();
+
+  // Calculate FPS every second
+  if (now - networkStats.lastFpsTime >= 1000) {
+    networkStats.fps = Math.round(networkStats.frameCount * 1000 / (now - networkStats.lastFpsTime));
+    networkStats.frameCount = 0;
+    networkStats.lastFpsTime = now;
+  }
+}
+
+/**
+ * Send a ping to measure latency
+ */
+function sendPing() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  networkStats.lastPingTime = performance.now();
+  ws.send(JSON.stringify({
+    type: "ping",
+    timestamp: networkStats.lastPingTime,
+  }));
+}
+
+/**
+ * Handle pong response from server
+ */
+function handlePong(data) {
+  const now = performance.now();
+  networkStats.latency = Math.round(now - data.timestamp);
+}
+
+/**
+ * Update the network stats display
+ */
+function updateNetworkStatsDisplay() {
+  if (!networkStats.visible) return;
+
+  // Update FPS display
+  const fpsElement = document.getElementById("stats-fps");
+  if (fpsElement) {
+    fpsElement.textContent = networkStats.fps;
+    fpsElement.className = "stat-value " + getFpsStatusClass(networkStats.fps);
+  }
+
+  // Update bandwidth display
+  const bandwidthElement = document.getElementById("stats-bandwidth");
+  if (bandwidthElement) {
+    const bandwidthKBs = (bandwidthMonitor.currentBandwidth / 1024).toFixed(1);
+    bandwidthElement.textContent = `${bandwidthKBs} KB/s`;
+    bandwidthElement.className = "stat-value " + getBandwidthStatusClass(bandwidthMonitor.currentBandwidth);
+  }
+
+  // Update latency display
+  const latencyElement = document.getElementById("stats-latency");
+  if (latencyElement) {
+    latencyElement.textContent = `${networkStats.latency} ms`;
+    latencyElement.className = "stat-value " + getLatencyStatusClass(networkStats.latency);
+  }
+
+  // Update LOD level display
+  const lodElement = document.getElementById("stats-lod");
+  if (lodElement) {
+    const lod = bandwidthMonitor.recommendedLOD.toUpperCase();
+    lodElement.textContent = lod;
+    lodElement.className = "stat-value " + getLodStatusClass(lod);
+  }
+
+  // Update connections display
+  const connectionsElement = document.getElementById("stats-connections");
+  if (connectionsElement) {
+    const connectionCount = peers.size + (ws && ws.readyState === WebSocket.OPEN ? 1 : 0);
+    connectionsElement.textContent = connectionCount;
+    connectionsElement.className = "stat-value " + getConnectionStatusClass(connectionCount);
+  }
+
+  // Update data transferred display
+  const dataElement = document.getElementById("stats-data");
+  if (dataElement) {
+    const dataMB = (networkStats.totalDataTransferred / (1024 * 1024)).toFixed(2);
+    dataElement.textContent = `${dataMB} MB`;
+  }
+}
+
+/**
+ * Track data received (call when receiving data)
+ */
+function trackDataReceived(bytes) {
+  networkStats.totalDataTransferred += bytes;
+}
+
+/**
+ * Get CSS class for FPS status
+ */
+function getFpsStatusClass(fps) {
+  if (fps >= 55) return "stat-good";
+  if (fps >= 30) return "stat-warning";
+  return "stat-critical";
+}
+
+/**
+ * Get CSS class for bandwidth status
+ */
+function getBandwidthStatusClass(bandwidth) {
+  // Bandwidth in bytes per second
+  // Good: > 100 KB/s, Warning: > 10 KB/s, Critical: < 10 KB/s
+  if (bandwidth > 102400) return "stat-good";
+  if (bandwidth > 10240) return "stat-warning";
+  return "stat-critical";
+}
+
+/**
+ * Get CSS class for latency status
+ */
+function getLatencyStatusClass(latency) {
+  if (latency === 0) return "stat-good"; // No data yet
+  if (latency < 50) return "stat-good";
+  if (latency < 150) return "stat-warning";
+  return "stat-critical";
+}
+
+/**
+ * Get CSS class for LOD status
+ */
+function getLodStatusClass(lod) {
+  if (lod === "HIGH") return "stat-good";
+  if (lod === "MEDIUM") return "stat-warning";
+  return "stat-critical";
+}
+
+/**
+ * Get CSS class for connection status
+ */
+function getConnectionStatusClass(count) {
+  if (count > 0) return "stat-good";
+  return "stat-critical";
+}
+
 initThreeJS();
 initWebSocket();
 initWebXR();
 enableCameraControls();
 enableHeadTracking();
 setupObjectSpawningUI();
+initNetworkStats();
