@@ -71,6 +71,34 @@ const objectCount = new promClient.Gauge({
   registers: [register],
 });
 
+// Golden Signal 1: Latency - WebSocket message processing time
+const messageLatency = new promClient.Histogram({
+  name: "streamxr_message_duration_seconds",
+  help: "WebSocket message processing duration in seconds",
+  labelNames: ["message_type"],
+  buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1],
+  registers: [register],
+});
+
+// Golden Signal 2: Traffic - Already covered by wsConnections and assetRequests
+
+// Golden Signal 3: Errors - WebSocket and asset errors
+const errorCounter = new promClient.Counter({
+  name: "streamxr_errors_total",
+  help: "Total number of errors",
+  labelNames: ["type", "operation"],
+  registers: [register],
+});
+
+// Golden Signal 4: Saturation - Connection capacity utilization
+const connectionSaturation = new promClient.Gauge({
+  name: "streamxr_connection_saturation_ratio",
+  help: "Ratio of active connections to maximum capacity (0-1)",
+  registers: [register],
+});
+
+const MAX_CONNECTIONS = 100; // Configure based on server capacity
+
 // Metrics endpoint
 app.get("/metrics", async (req, res) => {
   res.set("Content-Type", register.contentType);
@@ -98,6 +126,9 @@ wss.on("connection", (ws) => {
   const roomUsersList = roomManager.getRoomUsers(roomInfo.room) || [];
   roomUsers.set({ room: roomInfo.room }, roomUsersList.length); // getRoomUsers already includes current user
 
+  // Update saturation (Golden Signal: Saturation)
+  connectionSaturation.set(clients.size / MAX_CONNECTIONS);
+
   // Initialize object count for this room
   const objects = objectSync.getRoomObjects(roomInfo.room);
   objectCount.set({ room: roomInfo.room }, objects.length);
@@ -105,8 +136,12 @@ wss.on("connection", (ws) => {
   console.log(`Client ${clientId} connected. Total clients: ${clients.size}`);
 
   ws.on("message", async (message) => {
+    const startTime = Date.now();
+    let messageType = "unknown";
+
     try {
       const data = JSON.parse(message);
+      messageType = data.type || "unknown";
 
       if (data.type === "signal") {
         broadcastToOthers(clientId, {
@@ -154,10 +189,23 @@ wss.on("connection", (ws) => {
         handleReleaseObject(clientId, data.roomId, data.objectId);
       } else if (data.type === "move-object") {
         // Move an object (only if owned)
-        handleMoveObject(clientId, data.roomId, data.objectId, data.position, data.rotation);
+        handleMoveObject(
+          clientId,
+          data.roomId,
+          data.objectId,
+          data.position,
+          data.rotation,
+        );
       }
+
+      // Track message latency (Golden Signal: Latency)
+      const duration = (Date.now() - startTime) / 1000;
+      messageLatency.observe({ message_type: messageType }, duration);
     } catch (error) {
       console.error("Error parsing message:", error);
+
+      // Track errors (Golden Signal: Errors)
+      errorCounter.inc({ type: "message_parsing", operation: messageType });
     }
   });
 
@@ -177,6 +225,9 @@ wss.on("connection", (ws) => {
       roomUsers.set({ room: room }, roomUsersList.length);
     }
     bandwidthGauge.remove({ client_id: clientId });
+
+    // Update saturation (Golden Signal: Saturation)
+    connectionSaturation.set(clients.size / MAX_CONNECTIONS);
 
     console.log(
       `Client ${clientId} disconnected. Total clients: ${clients.size}`,
@@ -324,6 +375,9 @@ async function handleAssetRequest(clientId, ws, assetId, requestedLod) {
     );
   } catch (error) {
     console.error(`Error streaming asset ${assetId}:`, error);
+
+    // Track errors (Golden Signal: Errors)
+    errorCounter.inc({ type: "asset_streaming", operation: assetId });
 
     ws.send(
       JSON.stringify({
@@ -513,7 +567,9 @@ function handleGrabObject(userId, ws, roomId, objectId) {
         object: result.object,
       });
 
-      console.log(`User ${userId} grabbed object ${objectId} in room ${roomId}`);
+      console.log(
+        `User ${userId} grabbed object ${objectId} in room ${roomId}`,
+      );
     } else {
       // Send failure message back to requesting user
       ws.send(
@@ -522,7 +578,7 @@ function handleGrabObject(userId, ws, roomId, objectId) {
           objectId: objectId,
           ownedBy: result.ownedBy,
           message: "Object is currently owned by another user",
-        })
+        }),
       );
     }
   } catch (error) {
@@ -531,7 +587,7 @@ function handleGrabObject(userId, ws, roomId, objectId) {
       JSON.stringify({
         type: "error",
         message: error.message,
-      })
+      }),
     );
   }
 }
@@ -548,7 +604,9 @@ function handleReleaseObject(userId, roomId, objectId) {
         userId: userId,
       });
 
-      console.log(`User ${userId} released object ${objectId} in room ${roomId}`);
+      console.log(
+        `User ${userId} released object ${objectId} in room ${roomId}`,
+      );
     }
   } catch (error) {
     console.error("Error releasing object:", error);
@@ -566,7 +624,9 @@ function handleMoveObject(userId, roomId, objectId, position, rotation) {
 
     // Check if user owns this object
     if (object.ownedBy !== userId) {
-      console.warn(`User ${userId} tried to move object ${objectId} but doesn't own it`);
+      console.warn(
+        `User ${userId} tried to move object ${objectId} but doesn't own it`,
+      );
       return;
     }
 

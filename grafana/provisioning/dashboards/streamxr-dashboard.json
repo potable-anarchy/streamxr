@@ -1,6 +1,6 @@
 {
-  "title": "StreamXR Monitoring",
-  "tags": ["streamxr"],
+  "title": "StreamXR Monitoring - 4 Golden Signals",
+  "tags": ["streamxr", "golden-signals"],
   "timezone": "browser",
   "refresh": "5s",
   "schemaVersion": 39,
@@ -42,15 +42,188 @@
               { "value": 1, "color": "green" }
             ]
           }
-        },
-        "overrides": []
+        }
       }
+    },
+    {
+      "id": 200,
+      "title": "🔷 GOLDEN SIGNALS",
+      "type": "row",
+      "gridPos": { "x": 0, "y": 3, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "id": 201,
+      "title": "1️⃣ Latency - Message Processing (p95)",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 4, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(streamxr_message_duration_seconds_bucket[1m]))",
+          "refId": "A",
+          "legendFormat": "p95 latency"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 0.05, "color": "yellow" },
+              { "value": 0.1, "color": "red" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 202,
+      "title": "2️⃣ Traffic - Requests per Second",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 4, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "rate(streamxr_asset_requests_total[1m])",
+          "refId": "A",
+          "legendFormat": "Asset Requests/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "value": null, "color": "blue" }]
+          }
+        }
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 203,
+      "title": "3️⃣ Errors - Error Rate",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 4, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "rate(streamxr_errors_total[1m])",
+          "refId": "A",
+          "legendFormat": "Errors/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 0.1, "color": "yellow" },
+              { "value": 1, "color": "red" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 204,
+      "title": "4️⃣ Saturation - Connection Capacity",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 4, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "streamxr_connection_saturation_ratio * 100",
+          "refId": "A",
+          "legendFormat": "Capacity Used"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 70, "color": "yellow" },
+              { "value": 90, "color": "red" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 205,
+      "title": "Latency Breakdown by Message Type",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(streamxr_message_duration_seconds_sum[1m]) / rate(streamxr_message_duration_seconds_count[1m])",
+          "refId": "A",
+          "legendFormat": "{{message_type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        }
+      }
+    },
+    {
+      "id": 206,
+      "title": "Error Breakdown by Type",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 6 },
+      "targets": [
+        {
+          "expr": "rate(streamxr_errors_total[1m])",
+          "refId": "A",
+          "legendFormat": "{{type}} - {{operation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20
+          }
+        }
+      }
+    },
+    {
+      "id": 300,
+      "title": "📊 SERVICE METRICS",
+      "type": "row",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 1 },
+      "collapsed": false
     },
     {
       "id": 1,
       "title": "Active WebSocket Connections",
       "type": "stat",
-      "gridPos": { "x": 0, "y": 3, "w": 6, "h": 4 },
+      "gridPos": { "x": 0, "y": 15, "w": 6, "h": 4 },
       "targets": [
         {
           "expr": "streamxr_websocket_connections",
@@ -78,7 +251,7 @@
       "id": 2,
       "title": "Users Per Room",
       "type": "stat",
-      "gridPos": { "x": 6, "y": 3, "w": 6, "h": 4 },
+      "gridPos": { "x": 6, "y": 15, "w": 6, "h": 4 },
       "targets": [
         {
           "expr": "sum(streamxr_room_users)",
@@ -94,7 +267,7 @@
       "id": 3,
       "title": "Shared Objects",
       "type": "stat",
-      "gridPos": { "x": 12, "y": 3, "w": 6, "h": 4 },
+      "gridPos": { "x": 12, "y": 15, "w": 6, "h": 4 },
       "targets": [
         {
           "expr": "sum(streamxr_shared_objects_total)",
@@ -110,7 +283,7 @@
       "id": 4,
       "title": "CPU Usage %",
       "type": "stat",
-      "gridPos": { "x": 18, "y": 3, "w": 6, "h": 4 },
+      "gridPos": { "x": 18, "y": 15, "w": 6, "h": 4 },
       "targets": [
         {
           "expr": "rate(process_cpu_seconds_total{job=\"streamxr\"}[1m]) * 100",
@@ -139,7 +312,7 @@
       "id": 5,
       "title": "WebSocket Connections Over Time",
       "type": "timeseries",
-      "gridPos": { "x": 0, "y": 7, "w": 12, "h": 8 },
+      "gridPos": { "x": 0, "y": 19, "w": 12, "h": 8 },
       "targets": [
         {
           "expr": "streamxr_websocket_connections",
@@ -161,7 +334,7 @@
       "id": 6,
       "title": "Asset Requests Rate",
       "type": "timeseries",
-      "gridPos": { "x": 12, "y": 7, "w": 12, "h": 8 },
+      "gridPos": { "x": 12, "y": 19, "w": 12, "h": 8 },
       "targets": [
         {
           "expr": "rate(streamxr_asset_requests_total[1m])",
@@ -179,7 +352,7 @@
       "id": 7,
       "title": "Asset Data Transfer Rate",
       "type": "timeseries",
-      "gridPos": { "x": 0, "y": 15, "w": 12, "h": 8 },
+      "gridPos": { "x": 0, "y": 27, "w": 12, "h": 8 },
       "targets": [
         {
           "expr": "rate(streamxr_asset_bytes_transferred_total[1m])",
@@ -197,7 +370,7 @@
       "id": 8,
       "title": "Client Bandwidth",
       "type": "timeseries",
-      "gridPos": { "x": 12, "y": 15, "w": 12, "h": 8 },
+      "gridPos": { "x": 12, "y": 27, "w": 12, "h": 8 },
       "targets": [
         {
           "expr": "streamxr_client_bandwidth_bps or vector(0)",
@@ -216,7 +389,7 @@
       "id": 9,
       "title": "CPU Usage",
       "type": "timeseries",
-      "gridPos": { "x": 0, "y": 23, "w": 12, "h": 6 },
+      "gridPos": { "x": 0, "y": 35, "w": 12, "h": 6 },
       "targets": [
         {
           "expr": "rate(process_cpu_seconds_total{job=\"streamxr\"}[1m]) * 100",
@@ -234,7 +407,7 @@
       "id": 10,
       "title": "Memory Usage",
       "type": "timeseries",
-      "gridPos": { "x": 12, "y": 23, "w": 12, "h": 6 },
+      "gridPos": { "x": 12, "y": 35, "w": 12, "h": 6 },
       "targets": [
         {
           "expr": "process_resident_memory_bytes{job=\"streamxr\"}",
