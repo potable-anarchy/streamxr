@@ -99,6 +99,10 @@ const connectionSaturation = new promClient.Gauge({
 
 const MAX_CONNECTIONS = 100; // Configure based on server capacity
 
+// Initialize error counter with zero values so Grafana shows 0 instead of "no data"
+errorCounter.inc({ type: "message_parsing", operation: "init" }, 0);
+errorCounter.inc({ type: "asset_streaming", operation: "init" }, 0);
+
 // Metrics endpoint
 app.get("/metrics", async (req, res) => {
   res.set("Content-Type", register.contentType);
@@ -422,14 +426,16 @@ function handleSimulationModeToggle(clientId, ws, enabled) {
   adaptiveStreaming.setSimulationMode(clientId, enabled);
 
   // Send confirmation and LOD recommendation back to client
-  const recommendedLOD = enabled ? 'low' : adaptiveStreaming.getRecommendedLOD(clientId, {});
+  const recommendedLOD = enabled
+    ? "low"
+    : adaptiveStreaming.getRecommendedLOD(clientId, {});
 
   ws.send(
     JSON.stringify({
       type: "simulation-mode-changed",
       enabled: enabled,
       lod: recommendedLOD,
-    })
+    }),
   );
 
   // If simulation is disabled, send an updated LOD recommendation
@@ -438,7 +444,7 @@ function handleSimulationModeToggle(clientId, ws, enabled) {
       JSON.stringify({
         type: "lod-recommendation",
         lod: recommendedLOD,
-      })
+      }),
     );
   }
 }
