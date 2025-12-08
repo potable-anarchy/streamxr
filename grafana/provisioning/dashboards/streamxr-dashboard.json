@@ -115,7 +115,7 @@
       "gridPos": { "x": 12, "y": 4, "w": 6, "h": 4 },
       "targets": [
         {
-          "expr": "rate(streamxr_errors_total[1m])",
+          "expr": "rate(streamxr_errors_total[1m]) or vector(0)",
           "refId": "A",
           "legendFormat": "Errors/s"
         }
@@ -197,7 +197,7 @@
       "gridPos": { "x": 12, "y": 8, "w": 12, "h": 6 },
       "targets": [
         {
-          "expr": "rate(streamxr_errors_total[1m])",
+          "expr": "rate(streamxr_errors_total[1m]) or vector(0)",
           "refId": "A",
           "legendFormat": "{{type}} - {{operation}}"
         }
