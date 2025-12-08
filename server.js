@@ -99,9 +99,9 @@ const connectionSaturation = new promClient.Gauge({
 
 const MAX_CONNECTIONS = 100; // Configure based on server capacity
 
-// Initialize error counter with zero values so Grafana shows 0 instead of "no data"
-errorCounter.inc({ type: "message_parsing", operation: "init" }, 0);
-errorCounter.inc({ type: "asset_streaming", operation: "init" }, 0);
+// Initialize error counter - counters need at least one increment to show up in Prometheus
+// We'll use labels that won't appear in real errors
+errorCounter.labels({ type: "none", operation: "none" });
 
 // Metrics endpoint
 app.get("/metrics", async (req, res) => {
