@@ -99,10 +99,6 @@ const connectionSaturation = new promClient.Gauge({
 
 const MAX_CONNECTIONS = 100; // Configure based on server capacity
 
-// Initialize error counter - counters need at least one increment to show up in Prometheus
-// We'll use labels that won't appear in real errors
-errorCounter.labels({ type: "none", operation: "none" });
-
 // Metrics endpoint
 app.get("/metrics", async (req, res) => {
   res.set("Content-Type", register.contentType);
@@ -426,16 +422,14 @@ function handleSimulationModeToggle(clientId, ws, enabled) {
   adaptiveStreaming.setSimulationMode(clientId, enabled);
 
   // Send confirmation and LOD recommendation back to client
-  const recommendedLOD = enabled
-    ? "low"
-    : adaptiveStreaming.getRecommendedLOD(clientId, {});
+  const recommendedLOD = enabled ? 'low' : adaptiveStreaming.getRecommendedLOD(clientId, {});
 
   ws.send(
     JSON.stringify({
       type: "simulation-mode-changed",
       enabled: enabled,
       lod: recommendedLOD,
-    }),
+    })
   );
 
   // If simulation is disabled, send an updated LOD recommendation
@@ -444,7 +438,7 @@ function handleSimulationModeToggle(clientId, ws, enabled) {
       JSON.stringify({
         type: "lod-recommendation",
         lod: recommendedLOD,
-      }),
+      })
     );
   }
 }
