@@ -77,15 +77,16 @@ node scripts/generateLODs.js --all          # Generate for all assets
 
 **Tech Stack:** Node.js + Express + WebSocket + Three.js + WebXR
 
-```
-Client (Three.js) ◄──WebSocket──► Server (Node.js)
-     │                                │
-     │                                ├── AssetManager (GLB streaming)
-     │                                ├── AdaptiveStreaming (bandwidth)
-     │                                ├── FoveatedStreaming (gaze tracking)
-     │                                ├── RoomManager (multiuser)
-     │                                ├── ObjectSync (shared state)
-     │                                └── LODGenerator (mesh decimation)
+```mermaid
+graph LR
+    Client[Client<br/>Three.js WebXR] <-->|WebSocket| Server[Server<br/>Node.js Express]
+    
+    Server --> AssetManager[AssetManager<br/>GLB streaming]
+    Server --> AdaptiveStreaming[AdaptiveStreaming<br/>bandwidth monitoring]
+    Server --> FoveatedStreaming[FoveatedStreaming<br/>gaze tracking]
+    Server --> RoomManager[RoomManager<br/>multiuser rooms]
+    Server --> ObjectSync[ObjectSync<br/>shared state]
+    Server --> LODGenerator[LODGenerator<br/>mesh decimation]
 ```
 
 ## Implementation Status
