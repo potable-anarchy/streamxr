@@ -617,6 +617,21 @@ async function getNeRFSplatData(assetId, options = {}) {
     }
   }
 
+  // Fallback: look in splat/ subdirectory with asset name
+  if (!splatFile) {
+    const splatDir = path.join(assetDir, 'splat');
+    if (fs.existsSync(splatDir)) {
+      for (const ext of splatExtensions) {
+        const filePath = path.join(splatDir, `${assetId}${ext}`);
+        if (fs.existsSync(filePath)) {
+          splatFile = filePath;
+          format = ext.substring(1);
+          break;
+        }
+      }
+    }
+  }
+
   if (!splatFile) {
     // No splat file found - generate mock data for testing
     // In production, this would return null

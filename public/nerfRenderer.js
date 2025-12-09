@@ -1,5 +1,6 @@
 /**
- * GaussianSplatRenderer - Renders 3D Gaussian Splat models using gsplat.js
+ * GaussianSplatRenderer - Renders 3D Gaussian Splat models using Three.js
+ * This is a simplified renderer that displays splat data as a colored point cloud
  * Integrates with the existing Three.js scene for StreamXR
  */
 class GaussianSplatRenderer {
@@ -7,6 +8,7 @@ class GaussianSplatRenderer {
     this.scene = scene;
     this.camera = camera;
     this.renderer = renderer;
+    this.pointCloud = null;
     this.splatMesh = null;
     this.isLoading = false;
     this.isLoaded = false;
@@ -17,8 +19,8 @@ class GaussianSplatRenderer {
   }
 
   /**
-   * Load a Gaussian Splat model from URL or file path
-   * @param {string} url - URL to the .splat or .ply file
+   * Load a Gaussian Splat model from a Blob URL
+   * @param {string} url - Blob URL to the .splat data
    * @param {Object} options - Loading options
    * @param {Function} options.onProgress - Progress callback (0-1)
    * @param {Function} options.onLoad - Load complete callback
@@ -43,37 +45,46 @@ class GaussianSplatRenderer {
     console.log('[GaussianSplatRenderer] Loading splat from:', url);
 
     try {
-      // Dispose of existing splat if any
-      if (this.splatMesh) {
+      // Dispose of existing point cloud if any
+      if (this.pointCloud) {
         this.dispose();
       }
 
-      // Check if gsplat library is available
-      if (typeof GSPLAT === 'undefined') {
-        throw new Error('gsplat.js library not loaded. Ensure the script tag is included before nerfRenderer.js');
+      // Fetch the splat data
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch splat: ${response.status}`);
       }
 
-      // Create a new GSPLAT loader
-      const loader = new GSPLAT.PLYLoader();
+      const arrayBuffer = await response.arrayBuffer();
+      this.loadProgress = 0.5;
+      if (this.onProgressCallback) {
+        this.onProgressCallback(0.5);
+      }
 
-      // Load the splat data with progress tracking
-      const splatData = await this._loadWithProgress(url, loader);
+      // Parse the splat data
+      const splatData = this.parseSplatData(arrayBuffer);
+      this.loadProgress = 0.8;
+      if (this.onProgressCallback) {
+        this.onProgressCallback(0.8);
+      }
 
-      // Create the splat mesh
-      this.splatMesh = new GSPLAT.Splat(splatData);
+      // Create Three.js point cloud from splat data
+      this.pointCloud = this.createPointCloud(splatData);
+      this.splatMesh = this.pointCloud;
 
       // Add to scene
-      this.scene.add(this.splatMesh);
+      this.scene.add(this.pointCloud);
 
       this.isLoaded = true;
       this.isLoading = false;
       this.loadProgress = 1;
 
-      console.log('[GaussianSplatRenderer] Splat loaded successfully');
+      console.log(`[GaussianSplatRenderer] Splat loaded: ${splatData.count} splats`);
 
       // Call success callback
       if (this.onLoadCallback) {
-        this.onLoadCallback(this.splatMesh);
+        this.onLoadCallback(this.pointCloud);
       }
 
     } catch (error) {
@@ -92,61 +103,88 @@ class GaussianSplatRenderer {
   }
 
   /**
-   * Internal method to load with progress tracking
-   * @private
+   * Parse .splat binary format (antimatter15 format)
+   * Each splat is 32 bytes:
+   * - Position: 3x float32 (12 bytes)
+   * - Scale: 3x float32 (12 bytes)
+   * - Color: 4x uint8 RGBA (4 bytes)
+   * - Rotation: 4x uint8 quaternion (4 bytes)
    */
-  async _loadWithProgress(url, loader) {
-    return new Promise((resolve, reject) => {
-      // Fetch the file with progress tracking
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', url, true);
-      xhr.responseType = 'arraybuffer';
+  parseSplatData(arrayBuffer) {
+    const bytesPerSplat = 32;
+    const count = Math.floor(arrayBuffer.byteLength / bytesPerSplat);
 
-      xhr.onprogress = (event) => {
-        if (event.lengthComputable) {
-          this.loadProgress = event.loaded / event.total;
-          if (this.onProgressCallback) {
-            this.onProgressCallback(this.loadProgress);
-          }
-        }
-      };
+    console.log(`[GaussianSplatRenderer] Parsing ${count} splats from ${arrayBuffer.byteLength} bytes`);
 
-      xhr.onload = async () => {
-        if (xhr.status === 200) {
-          try {
-            // Parse the loaded data
-            const arrayBuffer = xhr.response;
-            const splatData = await loader.parseAsync(arrayBuffer);
-            resolve(splatData);
-          } catch (parseError) {
-            reject(new Error(`Failed to parse splat data: ${parseError.message}`));
-          }
-        } else {
-          reject(new Error(`HTTP error loading splat: ${xhr.status} ${xhr.statusText}`));
-        }
-      };
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const sizes = new Float32Array(count);
 
-      xhr.onerror = () => {
-        reject(new Error('Network error loading splat file'));
-      };
+    const dataView = new DataView(arrayBuffer);
 
-      xhr.send();
+    for (let i = 0; i < count; i++) {
+      const offset = i * bytesPerSplat;
+
+      // Position (3x float32, little-endian)
+      positions[i * 3] = dataView.getFloat32(offset, true);
+      positions[i * 3 + 1] = dataView.getFloat32(offset + 4, true);
+      positions[i * 3 + 2] = dataView.getFloat32(offset + 8, true);
+
+      // Scale (3x float32) - use average for point size
+      const scaleX = dataView.getFloat32(offset + 12, true);
+      const scaleY = dataView.getFloat32(offset + 16, true);
+      const scaleZ = dataView.getFloat32(offset + 20, true);
+      sizes[i] = (Math.abs(scaleX) + Math.abs(scaleY) + Math.abs(scaleZ)) / 3 * 100;
+
+      // Color (4x uint8 RGBA)
+      colors[i * 3] = dataView.getUint8(offset + 24) / 255;
+      colors[i * 3 + 1] = dataView.getUint8(offset + 25) / 255;
+      colors[i * 3 + 2] = dataView.getUint8(offset + 26) / 255;
+    }
+
+    return { positions, colors, sizes, count };
+  }
+
+  /**
+   * Create a Three.js point cloud from parsed splat data
+   */
+  createPointCloud(splatData) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(splatData.positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(splatData.colors, 3));
+
+    // Create custom shader material for better splat visualization
+    const material = new THREE.PointsMaterial({
+      size: 0.02,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.9,
+      sizeAttenuation: true
     });
+
+    const points = new THREE.Points(geometry, material);
+    points.name = 'gaussian-splat';
+
+    return points;
   }
 
   /**
    * Dispose of the current splat model and free resources
    */
   dispose() {
-    if (this.splatMesh) {
+    if (this.pointCloud) {
       // Remove from scene
-      this.scene.remove(this.splatMesh);
+      this.scene.remove(this.pointCloud);
 
-      // Dispose of GSPLAT resources
-      if (this.splatMesh.dispose) {
-        this.splatMesh.dispose();
+      // Dispose geometry and material
+      if (this.pointCloud.geometry) {
+        this.pointCloud.geometry.dispose();
+      }
+      if (this.pointCloud.material) {
+        this.pointCloud.material.dispose();
       }
 
+      this.pointCloud = null;
       this.splatMesh = null;
       this.isLoaded = false;
       this.loadProgress = 0;
@@ -160,58 +198,47 @@ class GaussianSplatRenderer {
    * @param {number} deltaTime - Time since last frame in seconds
    */
   update(deltaTime) {
-    if (!this.isLoaded || !this.splatMesh) {
-      return;
-    }
-
-    // Update splat rendering based on camera position
-    // gsplat.js handles view-dependent rendering internally
-    // but we may need to trigger updates for sorting
-
-    if (this.splatMesh.update) {
-      this.splatMesh.update(this.camera);
-    }
+    // Point clouds don't need per-frame updates in this simple implementation
   }
 
   /**
    * Set the position of the splat model
-   * @param {number} x
-   * @param {number} y
-   * @param {number} z
    */
   setPosition(x, y, z) {
-    if (this.splatMesh) {
-      this.splatMesh.position.set(x, y, z);
+    if (this.pointCloud) {
+      this.pointCloud.position.set(x, y, z);
     }
   }
 
   /**
    * Set the scale of the splat model
-   * @param {number} x
-   * @param {number} y
-   * @param {number} z
    */
   setScale(x, y, z) {
-    if (this.splatMesh) {
-      this.splatMesh.scale.set(x, y, z);
+    if (this.pointCloud) {
+      this.pointCloud.scale.set(x, y, z);
     }
   }
 
   /**
    * Set the rotation of the splat model (in radians)
-   * @param {number} x
-   * @param {number} y
-   * @param {number} z
    */
   setRotation(x, y, z) {
-    if (this.splatMesh) {
-      this.splatMesh.rotation.set(x, y, z);
+    if (this.pointCloud) {
+      this.pointCloud.rotation.set(x, y, z);
+    }
+  }
+
+  /**
+   * Set visibility of the splat model
+   */
+  setVisible(visible) {
+    if (this.pointCloud) {
+      this.pointCloud.visible = visible;
     }
   }
 
   /**
    * Get the current loading progress (0-1)
-   * @returns {number}
    */
   getLoadProgress() {
     return this.loadProgress;
@@ -219,7 +246,6 @@ class GaussianSplatRenderer {
 
   /**
    * Check if a splat model is currently loaded
-   * @returns {boolean}
    */
   getIsLoaded() {
     return this.isLoaded;
@@ -227,18 +253,16 @@ class GaussianSplatRenderer {
 
   /**
    * Check if a splat model is currently loading
-   * @returns {boolean}
    */
   getIsLoading() {
     return this.isLoading;
   }
 
   /**
-   * Get the underlying splat mesh for direct manipulation
-   * @returns {Object|null}
+   * Get the underlying point cloud for direct manipulation
    */
   getSplatMesh() {
-    return this.splatMesh;
+    return this.pointCloud;
   }
 }
 

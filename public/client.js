@@ -49,9 +49,7 @@ let bandwidthSimulation = {
   forcedLOD: "low", // Force LOW LOD on startup
 };
 
-// NeRF/Gaussian Splat rendering state
-let renderMode = "mesh"; // 'mesh' or 'nerf' - controls whether to use traditional mesh or NeRF rendering
-let gaussianRenderer = null; // GaussianSplatRenderer instance
+// NeRF streaming state
 let nerfStreams = new Map(); // Track incoming NeRF data streams (assetId -> stream data)
 
 // Head tracking state
@@ -319,6 +317,9 @@ function handleSignalingMessage(data) {
         });
       }
 
+      // Request asset list to check for NeRF availability
+      requestAssetList();
+
       // Request an asset after connection (adaptive streaming will select LOD)
       setTimeout(() => requestAsset("helmet"), 1000);
 
@@ -375,6 +376,8 @@ function handleSignalingMessage(data) {
 
     case "asset_list":
       console.log("Available assets:", data.assets);
+      // Check if helmet asset has NeRF available
+      handleAssetList(data.assets);
       break;
 
     case "lod-recommendation":
@@ -611,6 +614,13 @@ function updateAvatarPosition(userId, positionData) {
 }
 
 // Asset Streaming Functions
+
+function requestAssetList() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    console.log("Requesting asset list...");
+    ws.send(JSON.stringify({ type: "list_assets" }));
+  }
+}
 
 function requestAsset(assetId, lod = null) {
   if (!assetId) {
@@ -989,6 +999,15 @@ function handleNeRFError(data) {
     nerfStreams.delete(data.assetId);
   }
 
+  // Disable NeRF button and show error state
+  updateNeRFButtonState(false);
+
+  // Auto-switch to GLB mode on error
+  if (renderMode === "nerf") {
+    console.log("[NeRF] Auto-switching to GLB mode due to error");
+    setRenderMode("glb");
+  }
+
   updateStatus("binary-status", "NeRF Error: " + data.error, "disconnected");
 }
 
@@ -1036,15 +1055,16 @@ function loadNeRFModel(url, assetId, format) {
       onLoad: (splatMesh) => {
         console.log("[NeRF] Gaussian Splat loaded successfully:", assetId);
 
-        // Switch to NeRF render mode
-        renderMode = "nerf";
+        // Enable the NeRF button now that model is loaded
+        updateNeRFButtonState(true);
 
         // Position the splat model
         gaussianRenderer.setPosition(0, 0, -2);
         gaussianRenderer.setScale(1.5, 1.5, 1.5);
 
-        // Store asset metadata
+        // Initially hide the splat mesh (user must click NeRF button to view)
         if (splatMesh) {
+          splatMesh.visible = false;
           splatMesh.userData = {
             assetId: assetId,
             format: format,
@@ -1052,18 +1072,29 @@ function loadNeRFModel(url, assetId, format) {
           };
         }
 
-        updateStatus("binary-status", "NeRF Loaded!", "connected");
+        updateStatus("binary-status", "NeRF Ready", "connected");
+        updateModeButtons();
         URL.revokeObjectURL(url);
       },
       onError: (error) => {
         console.error("[NeRF] Failed to load Gaussian Splat:", error);
         updateStatus("binary-status", "NeRF Load Error", "disconnected");
+        updateNeRFButtonState(false);
+        // Auto-switch to GLB mode on load error
+        if (renderMode === "nerf") {
+          setRenderMode("glb");
+        }
         URL.revokeObjectURL(url);
       },
     })
     .catch((error) => {
       console.error("[NeRF] Error in loadSplat:", error);
       updateStatus("binary-status", "NeRF Load Error", "disconnected");
+      updateNeRFButtonState(false);
+      // Auto-switch to GLB mode on catch error
+      if (renderMode === "nerf") {
+        setRenderMode("glb");
+      }
       URL.revokeObjectURL(url);
     });
 }
@@ -2492,6 +2523,29 @@ function updateModeButtons() {
 }
 
 /**
+ * Handle asset list from server - check for NeRF availability
+ * @param {Array} assets - List of available assets
+ */
+function handleAssetList(assets) {
+  // Check if the helmet asset has NeRF available
+  const helmetAsset = assets.find(asset => asset.id === "helmet");
+  if (helmetAsset) {
+    console.log(`Helmet asset hasNeRF: ${helmetAsset.hasNeRF}`);
+    updateNeRFButtonState(helmetAsset.hasNeRF);
+
+    // If NeRF is available, request it automatically
+    if (helmetAsset.hasNeRF && ws && ws.readyState === WebSocket.OPEN) {
+      console.log("Requesting helmet NeRF data...");
+      ws.send(JSON.stringify({
+        type: "request_nerf",
+        assetId: "helmet",
+        options: { quality: "high" }
+      }));
+    }
+  }
+}
+
+/**
  * Update the NeRF button state based on availability
  * @param {boolean} available - Whether NeRF data is available
  */
@@ -2502,9 +2556,11 @@ function updateNeRFButtonState(available) {
   if (nerfBtn) {
     nerfBtn.disabled = !available;
     if (available) {
+      nerfBtn.textContent = "NeRF";
       nerfBtn.title = "Switch to NeRF rendering";
     } else {
-      nerfBtn.title = "NeRF data not available";
+      nerfBtn.textContent = "NeRF Not Found";
+      nerfBtn.title = "NeRF data not available for this asset";
     }
   }
 
