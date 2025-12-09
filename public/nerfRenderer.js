@@ -29,7 +29,7 @@ class GaussianSplatRenderer {
    */
   async loadSplat(url, options = {}) {
     if (this.isLoading) {
-      console.warn('[GaussianSplatRenderer] Already loading a splat model');
+      console.warn("[GaussianSplatRenderer] Already loading a splat model");
       return;
     }
 
@@ -42,7 +42,7 @@ class GaussianSplatRenderer {
     this.onErrorCallback = options.onError || null;
     this.onProgressCallback = options.onProgress || null;
 
-    console.log('[GaussianSplatRenderer] Loading splat from:', url);
+    console.log("[GaussianSplatRenderer] Loading splat from:", url);
 
     try {
       // Dispose of existing point cloud if any
@@ -80,18 +80,19 @@ class GaussianSplatRenderer {
       this.isLoading = false;
       this.loadProgress = 1;
 
-      console.log(`[GaussianSplatRenderer] Splat loaded: ${splatData.count} splats`);
+      console.log(
+        `[GaussianSplatRenderer] Splat loaded: ${splatData.count} splats`,
+      );
 
       // Call success callback
       if (this.onLoadCallback) {
         this.onLoadCallback(this.pointCloud);
       }
-
     } catch (error) {
       this.isLoading = false;
       this.isLoaded = false;
 
-      console.error('[GaussianSplatRenderer] Failed to load splat:', error);
+      console.error("[GaussianSplatRenderer] Failed to load splat:", error);
 
       // Call error callback
       if (this.onErrorCallback) {
@@ -114,7 +115,9 @@ class GaussianSplatRenderer {
     const bytesPerSplat = 32;
     const count = Math.floor(arrayBuffer.byteLength / bytesPerSplat);
 
-    console.log(`[GaussianSplatRenderer] Parsing ${count} splats from ${arrayBuffer.byteLength} bytes`);
+    console.log(
+      `[GaussianSplatRenderer] Parsing ${count} splats from ${arrayBuffer.byteLength} bytes`,
+    );
 
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
@@ -134,12 +137,23 @@ class GaussianSplatRenderer {
       const scaleX = dataView.getFloat32(offset + 12, true);
       const scaleY = dataView.getFloat32(offset + 16, true);
       const scaleZ = dataView.getFloat32(offset + 20, true);
-      sizes[i] = (Math.abs(scaleX) + Math.abs(scaleY) + Math.abs(scaleZ)) / 3 * 100;
+      sizes[i] =
+        ((Math.abs(scaleX) + Math.abs(scaleY) + Math.abs(scaleZ)) / 3) * 100;
 
       // Color (4x uint8 RGBA)
       colors[i * 3] = dataView.getUint8(offset + 24) / 255;
       colors[i * 3 + 1] = dataView.getUint8(offset + 25) / 255;
       colors[i * 3 + 2] = dataView.getUint8(offset + 26) / 255;
+    }
+
+    // Debug: Log first few colors to verify parsing
+    if (count > 0) {
+      console.log("[GaussianSplatRenderer] Sample colors (first 5 splats):");
+      for (let i = 0; i < Math.min(5, count); i++) {
+        console.log(
+          `  Splat ${i}: RGB(${colors[i * 3].toFixed(3)}, ${colors[i * 3 + 1].toFixed(3)}, ${colors[i * 3 + 2].toFixed(3)})`,
+        );
+      }
     }
 
     return { positions, colors, sizes, count };
@@ -150,20 +164,29 @@ class GaussianSplatRenderer {
    */
   createPointCloud(splatData) {
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(splatData.positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(splatData.colors, 3));
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(splatData.positions, 3),
+    );
+    geometry.setAttribute(
+      "color",
+      new THREE.BufferAttribute(splatData.colors, 3),
+    );
 
     // Create custom shader material for better splat visualization
     const material = new THREE.PointsMaterial({
-      size: 0.02,
+      size: 0.05, // Increased size for better visibility
       vertexColors: true,
       transparent: true,
-      opacity: 0.9,
-      sizeAttenuation: true
+      opacity: 1.0, // Full opacity
+      sizeAttenuation: true,
+      blending: THREE.NormalBlending,
+      depthWrite: true,
+      depthTest: true,
     });
 
     const points = new THREE.Points(geometry, material);
-    points.name = 'gaussian-splat';
+    points.name = "gaussian-splat";
 
     return points;
   }
@@ -189,7 +212,7 @@ class GaussianSplatRenderer {
       this.isLoaded = false;
       this.loadProgress = 0;
 
-      console.log('[GaussianSplatRenderer] Splat disposed');
+      console.log("[GaussianSplatRenderer] Splat disposed");
     }
   }
 
@@ -267,6 +290,6 @@ class GaussianSplatRenderer {
 }
 
 // Export for use in other modules
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.GaussianSplatRenderer = GaussianSplatRenderer;
 }
