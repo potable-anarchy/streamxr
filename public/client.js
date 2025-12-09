@@ -2731,5 +2731,6 @@ function sendWithSimulatedLatency(data) {
 
 // Initialize the application
 initThreeJS();
+enableCameraControls();
 initWebSocket();
 initNetworkStats();
