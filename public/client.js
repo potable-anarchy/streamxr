@@ -91,7 +91,7 @@ let sharedTransform = {
   rotation: { x: 0, y: 0, z: 0 },
   scale: { x: 1.5, y: 1.5, z: 1.5 },
   // NeRF-specific rotation offset (if needed to match GLB orientation)
-  nerfRotationOffset: { x: Math.PI, y: Math.PI, z: 0 }, // 180° X and Y rotation
+  nerfRotationOffset: { x: Math.PI * 1.5, y: Math.PI, z: Math.PI }, // 270° X, 180° Y and Z
 };
 
 function initThreeJS() {
@@ -2729,11 +2729,10 @@ function sendWithSimulatedLatency(data) {
   }
 }
 
-initThreeJS();
-initGaussianRenderer();
-initWebSocket();
-initWebXR();
-enableCameraControls();
-enableHeadTracking();
-setupObjectSpawningUI();
-initNetworkStats();
+
+// Show debug controls after a short delay
+setTimeout(() => {
+  if (nerfAvailable) {
+    showNerfDebugControls();
+  }
+}, 3000);
