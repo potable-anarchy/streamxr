@@ -90,6 +90,8 @@ let sharedTransform = {
   position: { x: 0, y: 0, z: -2 },
   rotation: { x: 0, y: 0, z: 0 },
   scale: { x: 1.5, y: 1.5, z: 1.5 },
+  // NeRF-specific rotation offset (if needed to match GLB orientation)
+  nerfRotationOffset: { x: 0, y: Math.PI, z: 0 }, // 180° Y rotation
 };
 
 function initThreeJS() {
@@ -1097,9 +1099,9 @@ function loadNeRFModel(url, assetId, format) {
           sharedTransform.position.z,
         );
         gaussianRenderer.setRotation(
-          sharedTransform.rotation.x,
-          sharedTransform.rotation.y,
-          sharedTransform.rotation.z,
+          sharedTransform.rotation.x + sharedTransform.nerfRotationOffset.x,
+          sharedTransform.rotation.y + sharedTransform.nerfRotationOffset.y,
+          sharedTransform.rotation.z + sharedTransform.nerfRotationOffset.z,
         );
         gaussianRenderer.setScale(
           sharedTransform.scale.x,
