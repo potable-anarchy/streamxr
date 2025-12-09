@@ -91,7 +91,7 @@ let sharedTransform = {
   rotation: { x: 0, y: 0, z: 0 },
   scale: { x: 1.5, y: 1.5, z: 1.5 },
   // NeRF-specific rotation offset (if needed to match GLB orientation)
-  nerfRotationOffset: { x: 0, y: Math.PI, z: 0 }, // 180° Y rotation
+  nerfRotationOffset: { x: Math.PI, y: Math.PI, z: 0 }, // 180° X and Y rotation
 };
 
 function initThreeJS() {
