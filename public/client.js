@@ -82,6 +82,11 @@ let networkStats = {
   totalDataTransferred: 0, // Total bytes transferred
 };
 
+// Render mode state
+let renderMode = "glb"; // 'glb' or 'nerf'
+let gaussianRenderer = null; // GaussianSplatRenderer instance
+let nerfAvailable = false; // Whether NeRF data is available from server
+
 function initThreeJS() {
   const container = document.getElementById("canvas-container");
 
@@ -146,6 +151,11 @@ function animate() {
   // Update hand tracking
   updateHandIndicators();
   updateGrabbedObject();
+
+  // Update Gaussian Splat renderer when in NeRF mode
+  if (renderMode === "nerf" && gaussianRenderer) {
+    gaussianRenderer.update();
+  }
 
   renderer.render(scene, camera);
 }
@@ -2403,6 +2413,122 @@ function updateLODIndicator() {
   }
 }
 
+// Render Mode Functions
+
+/**
+ * Set the render mode (GLB/LOD or NeRF)
+ * @param {string} mode - 'glb' or 'nerf'
+ */
+function setRenderMode(mode) {
+  if (mode === renderMode) {
+    console.log(`Already in ${mode} mode`);
+    return;
+  }
+
+  if (mode === "nerf" && !nerfAvailable) {
+    console.warn("NeRF mode not available - no NeRF data loaded");
+    return;
+  }
+
+  console.log(`Switching render mode from ${renderMode} to ${mode}`);
+  renderMode = mode;
+
+  if (mode === "glb") {
+    // Switch to GLB/LOD mode
+    // Show GLB model, hide NeRF splat
+    if (cube) {
+      cube.visible = true;
+    }
+    if (gaussianRenderer && gaussianRenderer.getSplatMesh()) {
+      gaussianRenderer.getSplatMesh().visible = false;
+    }
+  } else if (mode === "nerf") {
+    // Switch to NeRF mode
+    // Hide GLB model, show NeRF splat
+    if (cube) {
+      cube.visible = false;
+    }
+    if (gaussianRenderer && gaussianRenderer.getSplatMesh()) {
+      gaussianRenderer.getSplatMesh().visible = true;
+    }
+  }
+
+  // Update UI buttons
+  updateModeButtons();
+
+  // Notify server of mode change
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(
+      JSON.stringify({
+        type: "render-mode-change",
+        mode: mode,
+      }),
+    );
+  }
+}
+
+/**
+ * Update the render mode toggle buttons UI
+ */
+function updateModeButtons() {
+  const glbBtn = document.getElementById("glb-mode-btn");
+  const nerfBtn = document.getElementById("nerf-mode-btn");
+
+  if (glbBtn) {
+    if (renderMode === "glb") {
+      glbBtn.classList.add("active");
+    } else {
+      glbBtn.classList.remove("active");
+    }
+  }
+
+  if (nerfBtn) {
+    if (renderMode === "nerf") {
+      nerfBtn.classList.add("active");
+    } else {
+      nerfBtn.classList.remove("active");
+    }
+  }
+}
+
+/**
+ * Update the NeRF button state based on availability
+ * @param {boolean} available - Whether NeRF data is available
+ */
+function updateNeRFButtonState(available) {
+  nerfAvailable = available;
+  const nerfBtn = document.getElementById("nerf-mode-btn");
+
+  if (nerfBtn) {
+    nerfBtn.disabled = !available;
+    if (available) {
+      nerfBtn.title = "Switch to NeRF rendering";
+    } else {
+      nerfBtn.title = "NeRF data not available";
+    }
+  }
+
+  console.log(`NeRF button state updated: ${available ? "enabled" : "disabled"}`);
+}
+
+/**
+ * Initialize the Gaussian Splat renderer for NeRF mode
+ */
+function initGaussianRenderer() {
+  if (!scene || !camera || !renderer) {
+    console.warn("Cannot initialize GaussianSplatRenderer - Three.js not ready");
+    return;
+  }
+
+  if (typeof GaussianSplatRenderer === "undefined") {
+    console.warn("GaussianSplatRenderer class not available");
+    return;
+  }
+
+  gaussianRenderer = new GaussianSplatRenderer(scene, camera, renderer);
+  console.log("GaussianSplatRenderer initialized");
+}
+
 /**
  * Apply simulation mode settings locally
  */
@@ -2495,6 +2621,7 @@ function sendWithSimulatedLatency(data) {
 }
 
 initThreeJS();
+initGaussianRenderer();
 initWebSocket();
 initWebXR();
 enableCameraControls();

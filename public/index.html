@@ -166,10 +166,71 @@
                 background: rgba(76, 175, 80, 0.3);
                 color: #4caf50;
             }
+
+            /* Render Mode Toggle Buttons */
+            #render-mode-toggle {
+                position: absolute;
+                bottom: 70px;
+                right: 20px;
+                z-index: 1000;
+                display: flex;
+                gap: 8px;
+            }
+            .mode-btn {
+                background: rgba(100, 100, 100, 0.9);
+                color: white;
+                border: 2px solid rgba(255, 255, 255, 0.3);
+                padding: 10px 20px;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+                backdrop-filter: blur(4px);
+            }
+            .mode-btn:hover:not(:disabled) {
+                background: rgba(120, 120, 120, 1);
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            }
+            .mode-btn.active {
+                background: rgba(76, 175, 80, 0.9);
+                border-color: rgba(76, 175, 80, 1);
+            }
+            .mode-btn.active:hover:not(:disabled) {
+                background: rgba(76, 175, 80, 1);
+            }
+            .mode-btn:disabled {
+                background: rgba(80, 80, 80, 0.5);
+                color: rgba(255, 255, 255, 0.4);
+                cursor: not-allowed;
+                transform: none;
+                box-shadow: none;
+            }
         </style>
     </head>
     <body>
         <div id="canvas-container"></div>
+
+        <!-- Render Mode Toggle Buttons -->
+        <div id="render-mode-toggle">
+            <button
+                id="glb-mode-btn"
+                class="mode-btn active"
+                onclick="setRenderMode('glb')"
+            >
+                GLB/LOD
+            </button>
+            <button
+                id="nerf-mode-btn"
+                class="mode-btn"
+                disabled
+                onclick="setRenderMode('nerf')"
+            >
+                NeRF
+            </button>
+        </div>
 
         <!-- Bandwidth Simulation Toggle Button -->
         <div id="bandwidth-toggle">
@@ -253,7 +314,7 @@
         <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DRACOLoader.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/simple-peer@9.11.1/simplepeer.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/gsplat@1.0.3/dist/gsplat.umd.min.js"></script>
-        <script src="nerfRenderer.js?v=1"></script>
-        <script src="client.js?v=9"></script>
+        <script src="nerfRenderer.js?v=10"></script>
+        <script src="client.js?v=10"></script>
     </body>
 </html>
