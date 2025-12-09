@@ -2729,6 +2729,205 @@ function sendWithSimulatedLatency(data) {
   }
 }
 
+/**
+ * Screenshot Capture System for NeRF Training Data Generation
+ */
+let captureState = {
+  isCapturing: false,
+  currentView: 0,
+  totalViews: 100,
+  capturedImages: [],
+  cameraTransforms: [],
+  originalCameraPos: null,
+  originalCameraRot: null,
+  targetObject: null,
+};
+
+/**
+ * Start capturing views around the loaded helmet asset
+ */
+function startViewCapture(numViews = 100) {
+  if (captureState.isCapturing) {
+    console.log("[ViewCapture] Already capturing, please wait...");
+    return;
+  }
+
+  // Find the helmet mesh in the scene
+  const helmet = scene.children.find(
+    (child) => child.userData && child.userData.assetId === "helmet",
+  );
+
+  if (!helmet) {
+    console.error("[ViewCapture] No helmet asset found in scene");
+    return;
+  }
+
+  console.log(
+    "[ViewCapture] Starting capture of",
+    numViews,
+    "views around helmet",
+  );
+
+  // Save original camera state
+  captureState.originalCameraPos = camera.position.clone();
+  captureState.originalCameraRot = camera.rotation.clone();
+  captureState.targetObject = helmet;
+  captureState.totalViews = numViews;
+  captureState.currentView = 0;
+  captureState.capturedImages = [];
+  captureState.cameraTransforms = [];
+  captureState.isCapturing = true;
+
+  // Calculate helmet bounds for camera positioning
+  const box = new THREE.Box3().setFromObject(helmet);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const cameraDistance = maxDim * 2.5; // Distance from helmet
+
+  console.log(
+    "[ViewCapture] Helmet center:",
+    center,
+    "size:",
+    maxDim.toFixed(2),
+    "camera distance:",
+    cameraDistance.toFixed(2),
+  );
+
+  // Capture next view
+  captureNextView(center, cameraDistance);
+}
+
+/**
+ * Capture a single view and advance to next
+ */
+function captureNextView(center, distance) {
+  if (
+    !captureState.isCapturing ||
+    captureState.currentView >= captureState.totalViews
+  ) {
+    finishCapture();
+    return;
+  }
+
+  const i = captureState.currentView;
+  const numViews = captureState.totalViews;
+
+  // Spherical coordinates - orbit around the helmet
+  const theta = (2 * Math.PI * i) / numViews; // Azimuth
+  const phi =
+    Math.PI / 4 + (Math.PI / 8) * Math.sin((3 * Math.PI * i) / numViews); // Elevation
+
+  // Convert to Cartesian coordinates
+  const x = distance * Math.sin(phi) * Math.cos(theta);
+  const y = distance * Math.sin(phi) * Math.sin(theta);
+  const z = distance * Math.cos(phi);
+
+  // Position camera
+  camera.position.set(center.x + x, center.y + y, center.z + z);
+  camera.lookAt(center);
+  camera.updateMatrixWorld();
+
+  // Render one frame
+  renderer.render(scene, camera);
+
+  // Capture screenshot after a short delay to ensure render completes
+  setTimeout(() => {
+    const dataURL = renderer.domElement.toDataURL("image/png");
+
+    // Store image data
+    captureState.capturedImages.push({
+      index: i,
+      dataURL: dataURL,
+      filename: `image_${String(i).padStart(4, "0")}.png`,
+    });
+
+    // Store camera transform (camera-to-world matrix)
+    const matrix = camera.matrixWorld.clone();
+    captureState.cameraTransforms.push({
+      file_path: `./image_${String(i).padStart(4, "0")}.png`,
+      transform_matrix: matrix.toArray(),
+    });
+
+    // Progress update
+    if ((i + 1) % 10 === 0) {
+      console.log(`[ViewCapture] Captured ${i + 1}/${numViews} views`);
+    }
+
+    captureState.currentView++;
+
+    // Capture next view
+    setTimeout(() => captureNextView(center, distance), 50);
+  }, 100);
+}
+
+/**
+ * Finish capture and prepare download
+ */
+function finishCapture() {
+  if (!captureState.isCapturing) return;
+
+  console.log("[ViewCapture] Capture complete! Preparing download...");
+
+  // Restore original camera position
+  camera.position.copy(captureState.originalCameraPos);
+  camera.rotation.copy(captureState.originalCameraRot);
+
+  // Create transforms.json
+  const transformsData = {
+    camera_angle_x: (camera.fov * Math.PI) / 180,
+    frames: captureState.cameraTransforms,
+  };
+
+  // Download transforms.json
+  downloadJSON(transformsData, "transforms.json");
+
+  // Download all images as a zip would be ideal, but for now just log instructions
+  console.log("[ViewCapture] ✓ Downloaded transforms.json");
+  console.log(
+    "[ViewCapture] To download images, open browser console and run:",
+  );
+  console.log(
+    "[ViewCapture]   captureState.capturedImages.forEach(img => downloadImage(img.dataURL, img.filename))",
+  );
+
+  captureState.isCapturing = false;
+}
+
+/**
+ * Helper to download JSON
+ */
+function downloadJSON(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Helper to download image
+ */
+function downloadImage(dataURL, filename) {
+  const a = document.createElement("a");
+  a.href = dataURL;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+// Make capture function globally accessible
+window.startViewCapture = startViewCapture;
+window.captureState = captureState;
+window.downloadImage = downloadImage;
+
 // Initialize the application
 initThreeJS();
 enableCameraControls();
