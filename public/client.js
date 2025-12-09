@@ -85,6 +85,13 @@ let renderMode = "glb"; // 'glb' or 'nerf'
 let gaussianRenderer = null; // GaussianSplatRenderer instance
 let nerfAvailable = false; // Whether NeRF data is available from server
 
+// Shared transform for both GLB and NeRF (keeps them in sync)
+let sharedTransform = {
+  position: { x: 0, y: 0, z: -2 },
+  rotation: { x: 0, y: 0, z: 0 },
+  scale: { x: 1.5, y: 1.5, z: 1.5 },
+};
+
 function initThreeJS() {
   const container = document.getElementById("canvas-container");
 
@@ -788,8 +795,22 @@ function loadGLBModel(url, assetId, lod) {
 
       // Add the loaded model to the scene
       const model = gltf.scene;
-      model.position.set(0, 0, -2); // Move back from camera
-      model.scale.set(1.5, 1.5, 1.5); // Scale up
+      // Use shared transform to keep GLB and NeRF in sync
+      model.position.set(
+        sharedTransform.position.x,
+        sharedTransform.position.y,
+        sharedTransform.position.z,
+      );
+      model.rotation.set(
+        sharedTransform.rotation.x,
+        sharedTransform.rotation.y,
+        sharedTransform.rotation.z,
+      );
+      model.scale.set(
+        sharedTransform.scale.x,
+        sharedTransform.scale.y,
+        sharedTransform.scale.z,
+      );
 
       // Store asset metadata for adaptive streaming
       model.userData.assetId = assetId;
@@ -880,7 +901,10 @@ function handleNeRFMetadata(data) {
 function handleNeRFChunk(data) {
   const stream = nerfStreams.get(data.assetId);
   if (!stream) {
-    console.error("[NeRF] Received chunk for unknown NeRF asset:", data.assetId);
+    console.error(
+      "[NeRF] Received chunk for unknown NeRF asset:",
+      data.assetId,
+    );
     return;
   }
 
@@ -954,7 +978,10 @@ function handleNeRFChunkData(arrayBuffer) {
 function handleNeRFComplete(data) {
   const stream = nerfStreams.get(data.assetId);
   if (!stream) {
-    console.error("[NeRF] Received completion for unknown NeRF asset:", data.assetId);
+    console.error(
+      "[NeRF] Received completion for unknown NeRF asset:",
+      data.assetId,
+    );
     return;
   }
 
@@ -1036,7 +1063,12 @@ function getMimeTypeForFormat(format) {
  * @param {string} format - File format (splat, ply, ksplat)
  */
 function loadNeRFModel(url, assetId, format) {
-  console.log("[NeRF] Loading Gaussian Splat model:", assetId, "format:", format);
+  console.log(
+    "[NeRF] Loading Gaussian Splat model:",
+    assetId,
+    "format:",
+    format,
+  );
   updateStatus("binary-status", "Loading NeRF...", "pending");
 
   // Initialize GaussianSplatRenderer if not already created
@@ -1058,9 +1090,22 @@ function loadNeRFModel(url, assetId, format) {
         // Enable the NeRF button now that model is loaded
         updateNeRFButtonState(true);
 
-        // Position the splat model
-        gaussianRenderer.setPosition(0, 0, -2);
-        gaussianRenderer.setScale(1.5, 1.5, 1.5);
+        // Use shared transform to keep GLB and NeRF in sync
+        gaussianRenderer.setPosition(
+          sharedTransform.position.x,
+          sharedTransform.position.y,
+          sharedTransform.position.z,
+        );
+        gaussianRenderer.setRotation(
+          sharedTransform.rotation.x,
+          sharedTransform.rotation.y,
+          sharedTransform.rotation.z,
+        );
+        gaussianRenderer.setScale(
+          sharedTransform.scale.x,
+          sharedTransform.scale.y,
+          sharedTransform.scale.z,
+        );
 
         // Initially hide the splat mesh (user must click NeRF button to view)
         if (splatMesh) {
@@ -2528,7 +2573,7 @@ function updateModeButtons() {
  */
 function handleAssetList(assets) {
   // Check if the helmet asset has NeRF available
-  const helmetAsset = assets.find(asset => asset.id === "helmet");
+  const helmetAsset = assets.find((asset) => asset.id === "helmet");
   if (helmetAsset) {
     console.log(`Helmet asset hasNeRF: ${helmetAsset.hasNeRF}`);
     updateNeRFButtonState(helmetAsset.hasNeRF);
@@ -2536,11 +2581,13 @@ function handleAssetList(assets) {
     // If NeRF is available, request it automatically
     if (helmetAsset.hasNeRF && ws && ws.readyState === WebSocket.OPEN) {
       console.log("Requesting helmet NeRF data...");
-      ws.send(JSON.stringify({
-        type: "request_nerf",
-        assetId: "helmet",
-        options: { quality: "high" }
-      }));
+      ws.send(
+        JSON.stringify({
+          type: "request_nerf",
+          assetId: "helmet",
+          options: { quality: "high" },
+        }),
+      );
     }
   }
 }
@@ -2564,7 +2611,9 @@ function updateNeRFButtonState(available) {
     }
   }
 
-  console.log(`NeRF button state updated: ${available ? "enabled" : "disabled"}`);
+  console.log(
+    `NeRF button state updated: ${available ? "enabled" : "disabled"}`,
+  );
 }
 
 /**
@@ -2572,7 +2621,9 @@ function updateNeRFButtonState(available) {
  */
 function initGaussianRenderer() {
   if (!scene || !camera || !renderer) {
-    console.warn("Cannot initialize GaussianSplatRenderer - Three.js not ready");
+    console.warn(
+      "Cannot initialize GaussianSplatRenderer - Three.js not ready",
+    );
     return;
   }
 
