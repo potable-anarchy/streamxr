@@ -2729,10 +2729,7 @@ function sendWithSimulatedLatency(data) {
   }
 }
 
-
-// Show debug controls after a short delay
-setTimeout(() => {
-  if (nerfAvailable) {
-    showNerfDebugControls();
-  }
-}, 3000);
+// Initialize the application
+initThreeJS();
+initWebSocket();
+initNetworkStats();
