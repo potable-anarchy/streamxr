@@ -1,0 +1,60 @@
+{
+  "version": "1.0",
+  "format": "splat",
+  "formatVersion": "antimatter15-v1",
+  "pointCount": 500000,
+  "bounds": {
+    "min": [
+      -0.9474585652351379,
+      -1.18715500831604,
+      -0.9009949564933777
+    ],
+    "max": [
+      0.9425494074821472,
+      0.81284499168396,
+      0.9009949564933777
+    ],
+    "center": [
+      -0.0024545788764953613,
+      -0.18715500831604004,
+      0
+    ],
+    "extent": [
+      1.8900079727172852,
+      2,
+      1.8019899129867554
+    ]
+  },
+  "fileSize": 16000000,
+  "fileSizeMB": 15.26,
+  "files": [
+    {
+      "name": "helmet.splat",
+      "size": 16000000,
+      "type": "gaussian-splat"
+    }
+  ],
+  "bytesPerSplat": 32,
+  "attributes": {
+    "position": {
+      "offset": 0,
+      "size": 12,
+      "type": "float32x3"
+    },
+    "scale": {
+      "offset": 12,
+      "size": 12,
+      "type": "float32x3"
+    },
+    "color": {
+      "offset": 24,
+      "size": 4,
+      "type": "uint8x4"
+    },
+    "rotation": {
+      "offset": 28,
+      "size": 4,
+      "type": "uint8x4"
+    }
+  }
+}
