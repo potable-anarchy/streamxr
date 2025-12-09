@@ -199,6 +199,12 @@ wss.on("connection", (ws) => {
       } else if (data.type === "set-simulation-mode") {
         // Handle bandwidth simulation toggle
         handleSimulationModeToggle(clientId, ws, data.enabled);
+      } else if (data.type === "request_nerf") {
+        // Handle NeRF/Gaussian Splat streaming request
+        await handleNeRFRequest(clientId, ws, data.assetId, data.options);
+      } else if (data.type === "set_render_mode") {
+        // Handle render mode change for NeRF visualization
+        handleSetRenderMode(clientId, ws, data.mode);
       }
 
       // Track message latency (Golden Signal: Latency)
@@ -217,6 +223,7 @@ wss.on("connection", (ws) => {
     clients.delete(clientId);
     adaptiveStreaming.removeClient(clientId);
     foveatedStreaming.removeClient(clientId);
+    clientRenderModes.delete(clientId);
 
     // Release all objects owned by this user
     objectSync.releaseAllUserObjects(clientId);
@@ -441,6 +448,311 @@ function handleSimulationModeToggle(clientId, ws, enabled) {
       })
     );
   }
+}
+
+// NeRF/Gaussian Splat streaming configuration
+const NERF_CHUNK_SIZE = 16 * 1024; // 16KB chunks for splat data
+
+// Client render mode tracking
+const clientRenderModes = new Map();
+
+/**
+ * Handle NeRF/Gaussian Splat streaming request
+ * Streams splat data in 16KB chunks with metadata
+ * @param {string} clientId - Client identifier
+ * @param {WebSocket} ws - WebSocket connection
+ * @param {string} assetId - NeRF asset identifier
+ * @param {Object} options - Optional streaming options (quality, region, etc.)
+ */
+async function handleNeRFRequest(clientId, ws, assetId, options = {}) {
+  const startTime = Date.now();
+
+  try {
+    console.log(`Client ${clientId} requested NeRF asset: ${assetId}`);
+
+    // Track NeRF asset request
+    assetRequests.inc({ asset: assetId, lod: options.quality || 'high' });
+
+    // Get NeRF/splat data from asset manager
+    // For now, we'll look for .ply or .splat files in the asset directory
+    const splatData = await getNeRFSplatData(assetId, options);
+
+    if (!splatData) {
+      ws.send(JSON.stringify({
+        type: 'nerf_error',
+        assetId: assetId,
+        error: `NeRF asset not found: ${assetId}`,
+      }));
+      errorCounter.inc({ type: 'nerf_streaming', operation: assetId });
+      return;
+    }
+
+    // Calculate chunk information
+    const totalChunks = Math.ceil(splatData.buffer.length / NERF_CHUNK_SIZE);
+
+    // Send metadata first
+    ws.send(JSON.stringify({
+      type: 'nerf_metadata',
+      assetId: assetId,
+      format: splatData.format, // 'ply', 'splat', or 'gaussian'
+      size: splatData.buffer.length,
+      chunks: totalChunks,
+      splatCount: splatData.splatCount || null,
+      boundingBox: splatData.boundingBox || null,
+      quality: options.quality || 'high',
+    }));
+
+    // Stream splat data in 16KB chunks
+    let offset = 0;
+    let chunkIndex = 0;
+
+    while (offset < splatData.buffer.length) {
+      // Check if client is still connected
+      if (ws.readyState !== WebSocket.OPEN) {
+        console.log(`Client ${clientId} disconnected during NeRF streaming`);
+        return;
+      }
+
+      const chunkSize = Math.min(NERF_CHUNK_SIZE, splatData.buffer.length - offset);
+      const chunk = splatData.buffer.slice(offset, offset + chunkSize);
+
+      // Send chunk header as JSON
+      ws.send(JSON.stringify({
+        type: 'nerf_chunk',
+        assetId: assetId,
+        chunkIndex: chunkIndex,
+        totalChunks: totalChunks,
+        offset: offset,
+        size: chunkSize,
+      }));
+
+      // Send binary chunk immediately after
+      ws.send(chunk);
+
+      offset += chunkSize;
+      chunkIndex++;
+
+      // Optional: Add small delay between chunks to prevent overwhelming slow clients
+      if (options.throttle && chunkIndex % 10 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+    }
+
+    // Send completion message
+    ws.send(JSON.stringify({
+      type: 'nerf_complete',
+      assetId: assetId,
+      totalSize: splatData.buffer.length,
+      chunksTransferred: chunkIndex,
+    }));
+
+    // Track transfer metrics
+    const transferDuration = Date.now() - startTime;
+    adaptiveStreaming.updateMetrics(clientId, splatData.buffer.length, transferDuration);
+    assetBytesTransferred.inc({ asset: assetId }, splatData.buffer.length);
+
+    console.log(`Completed NeRF streaming ${assetId} to client ${clientId} in ${transferDuration}ms (${splatData.buffer.length} bytes, ${chunkIndex} chunks)`);
+
+  } catch (error) {
+    console.error(`Error streaming NeRF asset ${assetId}:`, error);
+
+    // Track errors
+    errorCounter.inc({ type: 'nerf_streaming', operation: assetId });
+
+    ws.send(JSON.stringify({
+      type: 'nerf_error',
+      assetId: assetId,
+      error: error.message,
+    }));
+  }
+}
+
+/**
+ * Get NeRF/Gaussian Splat data from asset storage
+ * @param {string} assetId - Asset identifier
+ * @param {Object} options - Quality and format options
+ * @returns {Object|null} Splat data with buffer and metadata
+ */
+async function getNeRFSplatData(assetId, options = {}) {
+  const fs = require('fs');
+  const modelsDir = path.join(__dirname, 'public/models');
+  const assetDir = path.join(modelsDir, assetId);
+
+  // Check if asset directory exists
+  if (!fs.existsSync(assetDir)) {
+    return null;
+  }
+
+  // Look for splat files in order of preference
+  const splatExtensions = ['.splat', '.ply', '.gaussian'];
+  const qualityLevels = options.quality === 'low' ? ['low', 'medium', 'high'] :
+                        options.quality === 'medium' ? ['medium', 'high', 'low'] :
+                        ['high', 'medium', 'low'];
+
+  let splatFile = null;
+  let format = null;
+
+  // Try to find splat file with quality prefix
+  for (const quality of qualityLevels) {
+    for (const ext of splatExtensions) {
+      const filePath = path.join(assetDir, `${quality}${ext}`);
+      if (fs.existsSync(filePath)) {
+        splatFile = filePath;
+        format = ext.substring(1); // Remove the dot
+        break;
+      }
+    }
+    if (splatFile) break;
+  }
+
+  // Fallback: look for any splat file without quality prefix
+  if (!splatFile) {
+    for (const ext of splatExtensions) {
+      const filePath = path.join(assetDir, `splats${ext}`);
+      if (fs.existsSync(filePath)) {
+        splatFile = filePath;
+        format = ext.substring(1);
+        break;
+      }
+    }
+  }
+
+  if (!splatFile) {
+    // No splat file found - generate mock data for testing
+    // In production, this would return null
+    console.log(`No splat file found for ${assetId}, generating mock splat data`);
+    return generateMockSplatData(assetId);
+  }
+
+  // Read the splat file
+  const buffer = fs.readFileSync(splatFile);
+
+  // Parse basic metadata based on format
+  const metadata = parseSplatMetadata(buffer, format);
+
+  return {
+    buffer: buffer,
+    format: format,
+    splatCount: metadata.splatCount,
+    boundingBox: metadata.boundingBox,
+  };
+}
+
+/**
+ * Parse basic metadata from splat data
+ * @param {Buffer} buffer - Splat data buffer
+ * @param {string} format - File format
+ * @returns {Object} Metadata
+ */
+function parseSplatMetadata(buffer, format) {
+  const metadata = {
+    splatCount: 0,
+    boundingBox: null,
+  };
+
+  if (format === 'ply') {
+    // Basic PLY header parsing to extract vertex count
+    const headerEnd = buffer.indexOf(Buffer.from('end_header'));
+    if (headerEnd !== -1) {
+      const header = buffer.slice(0, headerEnd).toString('utf8');
+      const vertexMatch = header.match(/element vertex (\d+)/);
+      if (vertexMatch) {
+        metadata.splatCount = parseInt(vertexMatch[1], 10);
+      }
+    }
+  } else if (format === 'splat') {
+    // Assume 32 bytes per splat (position + color + scale + rotation)
+    metadata.splatCount = Math.floor(buffer.length / 32);
+  } else if (format === 'gaussian') {
+    // Gaussian splatting format - varies by implementation
+    // This is a simplified estimate
+    metadata.splatCount = Math.floor(buffer.length / 62);
+  }
+
+  return metadata;
+}
+
+/**
+ * Generate mock splat data for testing when no real splat file exists
+ * @param {string} assetId - Asset identifier
+ * @returns {Object} Mock splat data
+ */
+function generateMockSplatData(assetId) {
+  // Generate a small mock splat buffer for testing
+  // In production, this would not be used
+  const mockSplatCount = 1000;
+  const bytesPerSplat = 32; // position (12) + color (4) + scale (12) + rotation (4)
+  const mockBuffer = Buffer.alloc(mockSplatCount * bytesPerSplat);
+
+  // Fill with random-ish data
+  for (let i = 0; i < mockSplatCount; i++) {
+    const offset = i * bytesPerSplat;
+
+    // Position (3 floats)
+    mockBuffer.writeFloatLE((Math.random() - 0.5) * 4, offset);
+    mockBuffer.writeFloatLE((Math.random() - 0.5) * 4, offset + 4);
+    mockBuffer.writeFloatLE((Math.random() - 0.5) * 4 - 2, offset + 8);
+
+    // Color (RGBA bytes)
+    mockBuffer.writeUInt8(Math.floor(Math.random() * 255), offset + 12);
+    mockBuffer.writeUInt8(Math.floor(Math.random() * 255), offset + 13);
+    mockBuffer.writeUInt8(Math.floor(Math.random() * 255), offset + 14);
+    mockBuffer.writeUInt8(255, offset + 15); // Alpha
+
+    // Scale (3 floats)
+    mockBuffer.writeFloatLE(0.1 + Math.random() * 0.1, offset + 16);
+    mockBuffer.writeFloatLE(0.1 + Math.random() * 0.1, offset + 20);
+    mockBuffer.writeFloatLE(0.1 + Math.random() * 0.1, offset + 24);
+
+    // Rotation (quaternion w component only for simplicity)
+    mockBuffer.writeFloatLE(1.0, offset + 28);
+  }
+
+  return {
+    buffer: mockBuffer,
+    format: 'splat',
+    splatCount: mockSplatCount,
+    boundingBox: {
+      min: [-2, -2, -4],
+      max: [2, 2, 0],
+    },
+  };
+}
+
+/**
+ * Handle render mode change for NeRF visualization
+ * @param {string} clientId - Client identifier
+ * @param {WebSocket} ws - WebSocket connection
+ * @param {string} mode - Render mode (e.g., 'splat', 'point', 'mesh', 'hybrid')
+ */
+function handleSetRenderMode(clientId, ws, mode) {
+  const validModes = ['splat', 'point', 'mesh', 'hybrid', 'wireframe'];
+
+  if (!validModes.includes(mode)) {
+    ws.send(JSON.stringify({
+      type: 'nerf_error',
+      error: `Invalid render mode: ${mode}. Valid modes: ${validModes.join(', ')}`,
+    }));
+    return;
+  }
+
+  // Store client's render mode preference
+  clientRenderModes.set(clientId, mode);
+
+  console.log(`Client ${clientId} set render mode to: ${mode}`);
+
+  // Confirm the mode change to client
+  ws.send(JSON.stringify({
+    type: 'render_mode_changed',
+    mode: mode,
+  }));
+
+  // Broadcast to other users in the same room (optional - for collaborative viewing)
+  broadcastToRoom(clientId, {
+    type: 'peer_render_mode',
+    userId: clientId,
+    mode: mode,
+  });
 }
 
 function handleHeadTracking(clientId, data) {
