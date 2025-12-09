@@ -49,6 +49,11 @@ let bandwidthSimulation = {
   forcedLOD: "low", // Force LOW LOD on startup
 };
 
+// NeRF/Gaussian Splat rendering state
+let renderMode = "mesh"; // 'mesh' or 'nerf' - controls whether to use traditional mesh or NeRF rendering
+let gaussianRenderer = null; // GaussianSplatRenderer instance
+let nerfStreams = new Map(); // Track incoming NeRF data streams (assetId -> stream data)
+
 // Head tracking state
 let headTracking = {
   enabled: false,
@@ -203,7 +208,10 @@ function initWebSocket() {
     // Check if this is binary data
     if (event.data instanceof ArrayBuffer) {
       console.log("Received binary data, size:", event.data.byteLength);
-      handleAssetChunkData(event.data);
+      // Try NeRF chunk handler first, then fall back to asset chunk handler
+      if (!handleNeRFChunkData(event.data)) {
+        handleAssetChunkData(event.data);
+      }
     } else {
       // Handle JSON messages
       try {
@@ -381,6 +389,22 @@ function handleSignalingMessage(data) {
 
     case "object-deleted":
       handleObjectDeleted(data.objectId);
+      break;
+
+    case "nerf_metadata":
+      handleNeRFMetadata(data);
+      break;
+
+    case "nerf_chunk":
+      handleNeRFChunk(data);
+      break;
+
+    case "nerf_complete":
+      handleNeRFComplete(data);
+      break;
+
+    case "nerf_error":
+      handleNeRFError(data);
       break;
 
     case "pong":
@@ -769,6 +793,292 @@ function loadGLBModel(url, assetId, lod) {
       URL.revokeObjectURL(url);
     },
   );
+}
+
+// NeRF/Gaussian Splat Streaming Functions
+
+/**
+ * Request a NeRF/Gaussian Splat asset from the server
+ * @param {string} assetId - The asset identifier (e.g., 'helmet', 'room')
+ */
+function requestNeRF(assetId) {
+  if (!assetId) {
+    console.error("[NeRF] requestNeRF called with undefined assetId");
+    return;
+  }
+
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.error("[NeRF] Cannot request NeRF: WebSocket not connected");
+    return;
+  }
+
+  console.log("[NeRF] Requesting NeRF asset:", assetId);
+
+  ws.send(
+    JSON.stringify({
+      type: "request_nerf",
+      assetId: assetId,
+    }),
+  );
+
+  updateStatus("binary-status", "Requesting NeRF...", "pending");
+}
+
+/**
+ * Handle NeRF metadata message from server
+ * Initializes the stream state for receiving chunks
+ * @param {Object} data - Metadata including assetId, format, size, chunks
+ */
+function handleNeRFMetadata(data) {
+  console.log(
+    `[NeRF] Starting NeRF download: ${data.assetId}, format: ${data.format}, size: ${data.size} bytes, chunks: ${data.chunks}`,
+  );
+
+  // Initialize stream state for this NeRF asset
+  nerfStreams.set(data.assetId, {
+    assetId: data.assetId,
+    format: data.format,
+    totalSize: data.size,
+    totalChunks: data.chunks,
+    receivedChunks: 0,
+    chunks: [],
+    expectingChunk: false,
+    currentChunkIndex: 0,
+  });
+
+  // Start bandwidth monitoring for this download
+  bandwidthMonitor.downloadStart = Date.now();
+  bandwidthMonitor.bytesReceived = 0;
+
+  updateStatus("binary-status", `NeRF: (0/${data.chunks})`, "pending");
+}
+
+/**
+ * Handle NeRF chunk metadata - indicates binary data is coming next
+ * @param {Object} data - Chunk metadata including assetId, chunkIndex, totalChunks
+ */
+function handleNeRFChunk(data) {
+  const stream = nerfStreams.get(data.assetId);
+  if (!stream) {
+    console.error("[NeRF] Received chunk for unknown NeRF asset:", data.assetId);
+    return;
+  }
+
+  // Mark that we're expecting binary chunk data next
+  stream.expectingChunk = true;
+  stream.currentChunkIndex = data.chunkIndex;
+
+  console.log(
+    `[NeRF] Expecting binary chunk ${data.chunkIndex + 1}/${data.totalChunks} for ${data.assetId}`,
+  );
+}
+
+/**
+ * Handle binary NeRF chunk data
+ * Called from WebSocket onmessage when binary data is received
+ * @param {ArrayBuffer} arrayBuffer - The raw chunk data
+ */
+function handleNeRFChunkData(arrayBuffer) {
+  // Find the stream that is expecting a chunk
+  let targetStream = null;
+  let targetAssetId = null;
+
+  for (const [assetId, stream] of nerfStreams) {
+    if (stream.expectingChunk) {
+      targetStream = stream;
+      targetAssetId = assetId;
+      break;
+    }
+  }
+
+  if (!targetStream) {
+    // Not a NeRF chunk, might be asset chunk - let existing handler try
+    return false;
+  }
+
+  const chunkData = new Uint8Array(arrayBuffer);
+
+  // Store the chunk
+  targetStream.chunks.push(chunkData);
+  targetStream.receivedChunks++;
+
+  // Update bandwidth monitoring
+  bandwidthMonitor.bytesReceived += chunkData.length;
+  updateBandwidthMetrics();
+
+  // Track total data for stats overlay
+  trackDataReceived(chunkData.length);
+
+  console.log(
+    `[NeRF] Received chunk ${targetStream.receivedChunks}/${targetStream.totalChunks} for ${targetAssetId} (${chunkData.length} bytes)`,
+  );
+
+  // Reset expecting flag
+  targetStream.expectingChunk = false;
+
+  // Update status
+  updateStatus(
+    "binary-status",
+    `NeRF: (${targetStream.receivedChunks}/${targetStream.totalChunks})`,
+    "pending",
+  );
+
+  return true; // Indicate we handled the data
+}
+
+/**
+ * Handle NeRF download complete message
+ * Combines chunks and loads the Gaussian Splat model
+ * @param {Object} data - Completion data including assetId
+ */
+function handleNeRFComplete(data) {
+  const stream = nerfStreams.get(data.assetId);
+  if (!stream) {
+    console.error("[NeRF] Received completion for unknown NeRF asset:", data.assetId);
+    return;
+  }
+
+  console.log(
+    `[NeRF] Download complete: ${data.assetId}, received ${stream.receivedChunks} chunks`,
+  );
+
+  // Combine all chunks into single buffer
+  let totalLength = 0;
+  stream.chunks.forEach((chunk) => (totalLength += chunk.length));
+
+  const combinedBuffer = new Uint8Array(totalLength);
+  let offset = 0;
+  stream.chunks.forEach((chunk) => {
+    combinedBuffer.set(chunk, offset);
+    offset += chunk.length;
+  });
+
+  console.log(`[NeRF] Combined buffer size: ${combinedBuffer.length} bytes`);
+
+  // Create blob from combined buffer
+  const mimeType = getMimeTypeForFormat(stream.format);
+  const blob = new Blob([combinedBuffer], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+
+  // Load the Gaussian Splat model
+  loadNeRFModel(url, data.assetId, stream.format);
+
+  // Clean up stream state
+  nerfStreams.delete(data.assetId);
+}
+
+/**
+ * Handle NeRF streaming error from server
+ * @param {Object} data - Error data including assetId and error message
+ */
+function handleNeRFError(data) {
+  console.error(`[NeRF] Error streaming ${data.assetId}:`, data.error);
+
+  // Clean up any partial stream state
+  if (data.assetId) {
+    nerfStreams.delete(data.assetId);
+  }
+
+  updateStatus("binary-status", "NeRF Error: " + data.error, "disconnected");
+}
+
+/**
+ * Get MIME type for NeRF format
+ * @param {string} format - File format (splat, ply, ksplat)
+ * @returns {string} MIME type
+ */
+function getMimeTypeForFormat(format) {
+  switch (format) {
+    case "splat":
+      return "application/octet-stream";
+    case "ply":
+      return "application/x-ply";
+    case "ksplat":
+      return "application/octet-stream";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+/**
+ * Load a NeRF/Gaussian Splat model from URL
+ * @param {string} url - Blob URL to the splat data
+ * @param {string} assetId - Asset identifier
+ * @param {string} format - File format (splat, ply, ksplat)
+ */
+function loadNeRFModel(url, assetId, format) {
+  console.log("[NeRF] Loading Gaussian Splat model:", assetId, "format:", format);
+  updateStatus("binary-status", "Loading NeRF...", "pending");
+
+  // Initialize GaussianSplatRenderer if not already created
+  if (!gaussianRenderer) {
+    gaussianRenderer = new GaussianSplatRenderer(scene, camera, renderer);
+    console.log("[NeRF] GaussianSplatRenderer initialized");
+  }
+
+  // Load the splat model
+  gaussianRenderer
+    .loadSplat(url, {
+      onProgress: (progress) => {
+        const percent = Math.round(progress * 100);
+        updateStatus("binary-status", `NeRF: ${percent}%`, "pending");
+      },
+      onLoad: (splatMesh) => {
+        console.log("[NeRF] Gaussian Splat loaded successfully:", assetId);
+
+        // Switch to NeRF render mode
+        renderMode = "nerf";
+
+        // Position the splat model
+        gaussianRenderer.setPosition(0, 0, -2);
+        gaussianRenderer.setScale(1.5, 1.5, 1.5);
+
+        // Store asset metadata
+        if (splatMesh) {
+          splatMesh.userData = {
+            assetId: assetId,
+            format: format,
+            renderMode: "nerf",
+          };
+        }
+
+        updateStatus("binary-status", "NeRF Loaded!", "connected");
+        URL.revokeObjectURL(url);
+      },
+      onError: (error) => {
+        console.error("[NeRF] Failed to load Gaussian Splat:", error);
+        updateStatus("binary-status", "NeRF Load Error", "disconnected");
+        URL.revokeObjectURL(url);
+      },
+    })
+    .catch((error) => {
+      console.error("[NeRF] Error in loadSplat:", error);
+      updateStatus("binary-status", "NeRF Load Error", "disconnected");
+      URL.revokeObjectURL(url);
+    });
+}
+
+/**
+ * Toggle between mesh and NeRF render modes
+ * @returns {string} The new render mode
+ */
+function toggleRenderMode() {
+  if (renderMode === "mesh") {
+    renderMode = "nerf";
+    console.log("[NeRF] Switched to NeRF render mode");
+  } else {
+    renderMode = "mesh";
+    console.log("[NeRF] Switched to mesh render mode");
+  }
+  return renderMode;
+}
+
+/**
+ * Get current render mode
+ * @returns {string} Current render mode ('mesh' or 'nerf')
+ */
+function getRenderMode() {
+  return renderMode;
 }
 
 // Bandwidth monitoring functions
