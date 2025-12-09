@@ -1,0 +1,5 @@
+# This directory contains Gaussian Splat (.splat or .ply) files for the helmet model
+# Place your splat files here with the following naming convention:
+# - low.splat (or low.ply) - Low quality version
+# - medium.splat (or medium.ply) - Medium quality version
+# - high.splat (or high.ply) - High quality version
